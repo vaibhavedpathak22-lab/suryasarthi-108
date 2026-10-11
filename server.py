@@ -694,5 +694,249 @@ def run_server():
             httpd.shutdown()
 
 
+
+def wsgi_app(environ, start_response):
+    """Standard WSGI entrypoint for PythonAnywhere, Gunicorn, uWSGI."""
+    init_db()
+    method = environ.get("REQUEST_METHOD", "GET").upper()
+    path = environ.get("PATH_INFO", "/")
+    query_string = environ.get("QUERY_STRING", "")
+    qs = parse_qs(query_string)
+
+    cors_headers = [
+        ("Access-Control-Allow-Origin", "*"),
+        ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
+        ("Access-Control-Allow-Headers", "Content-Type, Authorization"),
+        ("Access-Control-Max-Age", "86400"),
+    ]
+
+    if method == "OPTIONS":
+        start_response("204 No Content", cors_headers)
+        return [b""]
+
+    def send_json(status_code, data_obj):
+        resp_bytes = json.dumps(data_obj, ensure_ascii=False).encode("utf-8")
+        status_map = {
+            200: "200 OK",
+            400: "400 Bad Request",
+            401: "401 Unauthorized",
+            403: "403 Forbidden",
+            404: "404 Not Found",
+            409: "409 Conflict",
+            500: "500 Internal Server Error",
+        }
+        status_str = status_map.get(status_code, f"{status_code} Status")
+        headers = cors_headers + [
+            ("Content-Type", "application/json; charset=utf-8"),
+            ("Content-Length", str(len(resp_bytes))),
+            ("Cache-Control", "no-cache, no-store, must-revalidate"),
+        ]
+        start_response(status_str, headers)
+        return [resp_bytes]
+
+    auth_header = environ.get("HTTP_AUTHORIZATION", "")
+    token = ""
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:].strip()
+    elif "token" in qs:
+        token = qs["token"][0]
+
+    user = get_user_by_token(token)
+
+    if method == "GET":
+        if path == "/api/status":
+            return send_json(200, {
+                "success": True,
+                "status": "online",
+                "app": "Suryasarthi 108",
+                "server_time": datetime.now().isoformat()
+            })
+
+        if path == "/api/auth/me":
+            if not user:
+                return send_json(401, {"success": False, "error": "Unauthorized / Session expired"})
+            return send_json(200, {"success": True, "user": user})
+
+        if path == "/api/data":
+            if not user:
+                return send_json(401, {"success": False, "error": "Authentication required to access user data"})
+            try:
+                user_payload = load_user_data_from_db(user["id"])
+                return send_json(200, {
+                    "success": True,
+                    "user": user,
+                    "cfg": user_payload["cfg"],
+                    "data": user_payload["data"]
+                })
+            except Exception as e:
+                return send_json(500, {"success": False, "error": str(e)})
+
+        if path == "/api/admin/users":
+            if not user or user.get("role") != "admin":
+                return send_json(403, {"success": False, "error": "Forbidden: Admin access required"})
+            with sqlite3.connect(DB_FILE) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT u.id, u.username, u.name, u.role, u.created_at,
+                           COALESCE(SUM(w.sets), 0) AS total_sets,
+                           COUNT(w.date) AS workout_days,
+                           MAX(w.date) AS last_active_date
+                    FROM users u
+                    LEFT JOIN user_workouts w ON u.id = w.user_id
+                    GROUP BY u.id
+                    ORDER BY u.id ASC
+                """)
+                users_list = [dict(r) for r in cursor.fetchall()]
+            return send_json(200, {"success": True, "users": users_list})
+
+        if path == "/api/admin/user-data":
+            if not user or user.get("role") != "admin":
+                return send_json(403, {"success": False, "error": "Forbidden: Admin access required"})
+            target_user_id = qs.get("user_id", [None])[0]
+            if not target_user_id:
+                return send_json(400, {"success": False, "error": "Missing user_id parameter"})
+            try:
+                target_payload = load_user_data_from_db(int(target_user_id))
+                return send_json(200, {"success": True, "user_id": target_user_id, **target_payload})
+            except Exception as e:
+                return send_json(500, {"success": False, "error": str(e)})
+
+        if path == "/api/admin/stats":
+            if not user or user.get("role") != "admin":
+                return send_json(403, {"success": False, "error": "Forbidden: Admin access required"})
+            return send_json(200, {"success": True, "stats": get_system_stats()})
+
+        if path == "/api/backup":
+            if not user or user.get("role") != "admin":
+                return send_json(403, {"success": False, "error": "Forbidden: Admin access required"})
+            if not os.path.exists(DB_FILE):
+                return send_json(404, {"success": False, "error": "Database file not found."})
+            with open(DB_FILE, "rb") as f:
+                db_bytes = f.read()
+            headers = cors_headers + [
+                ("Content-Type", "application/x-sqlite3"),
+                ("Content-Disposition", 'attachment; filename="suryasarthi_users.db"'),
+                ("Content-Length", str(len(db_bytes))),
+            ]
+            start_response("200 OK", headers)
+            return [db_bytes]
+
+    elif method == "POST":
+        try:
+            content_length = int(environ.get("CONTENT_LENGTH", 0))
+            body_bytes = environ["wsgi.input"].read(content_length)
+            payload = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
+        except Exception as e:
+            return send_json(400, {"success": False, "error": f"Invalid JSON: {str(e)}"})
+
+        if path == "/api/auth/register":
+            username = str(payload.get("username", "")).strip().lower()
+            password = str(payload.get("password", "")).strip()
+            name = str(payload.get("name", "")).strip() or username.capitalize()
+            role = "user"
+
+            if not username or not password:
+                return send_json(400, {"success": False, "error": "Username and password are required"})
+
+            pwd_hash = hash_password(password)
+            token = secrets.token_hex(24)
+
+            try:
+                with sqlite3.connect(DB_FILE) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT INTO users (username, password_hash, name, role)
+                        VALUES (?, ?, ?, ?)
+                    """, (username, pwd_hash, name, role))
+                    user_id = cursor.lastrowid
+                    cursor.execute("""
+                        INSERT INTO user_sessions (token, user_id)
+                        VALUES (?, ?)
+                    """, (token, user_id))
+                    conn.commit()
+
+                user_obj = {"id": user_id, "username": username, "name": name, "role": role}
+                return send_json(200, {
+                    "success": True,
+                    "message": "User registered successfully",
+                    "token": token,
+                    "user": user_obj
+                })
+            except sqlite3.IntegrityError:
+                return send_json(409, {"success": False, "error": "Username already exists. Please choose another."})
+            except Exception as e:
+                return send_json(500, {"success": False, "error": str(e)})
+
+        if path == "/api/auth/login":
+            username = str(payload.get("username", "")).strip().lower()
+            password = str(payload.get("password", "")).strip()
+
+            if not username or not password:
+                return send_json(400, {"success": False, "error": "Username and password are required"})
+
+            with sqlite3.connect(DB_FILE) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id, username, password_hash, name, role
+                    FROM users
+                    WHERE username = ?
+                """, (username,))
+                row = cursor.fetchone()
+
+                if not row or not verify_password(password, row["password_hash"]):
+                    return send_json(401, {"success": False, "error": "Invalid username or password"})
+
+                user_id = row["id"]
+                token = secrets.token_hex(24)
+
+                cursor.execute("""
+                    INSERT INTO user_sessions (token, user_id)
+                    VALUES (?, ?)
+                """, (token, user_id))
+                conn.commit()
+
+                user_obj = {
+                    "id": user_id,
+                    "username": row["username"],
+                    "name": row["name"],
+                    "role": row["role"]
+                }
+                return send_json(200, {
+                    "success": True,
+                    "message": "Login successful",
+                    "token": token,
+                    "user": user_obj
+                })
+
+        if path == "/api/auth/logout":
+            if token:
+                with sqlite3.connect(DB_FILE) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM user_sessions WHERE token = ?", (token,))
+                    conn.commit()
+            return send_json(200, {"success": True, "message": "Logged out successfully"})
+
+        if path == "/api/data":
+            if not user:
+                return send_json(401, {"success": False, "error": "Authentication required to save data"})
+
+            try:
+                save_user_data_to_db(user["id"], payload, create_snapshot=False)
+                return send_json(200, {
+                    "success": True,
+                    "message": "Practice data saved to SQLite",
+                    "user_id": user["id"]
+                })
+            except Exception as e:
+                return send_json(500, {"success": False, "error": str(e)})
+
+    return send_json(404, {"success": False, "error": "Endpoint not found"})
+
+
+application = wsgi_app
+
+
 if __name__ == "__main__":
     run_server()
