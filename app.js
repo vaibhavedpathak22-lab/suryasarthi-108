@@ -1,0 +1,4776 @@
+'use strict';
+
+/* ── 12 Poses + Mantras ─────────────────────────────────────── */
+const STEPS = [
+  { pose:"Pranamasana",           sub:"Prayer pose",                  breath:"Exhale", breathClass:"exhale", mantra:"Om Mitraya Namaha",          meaning:"Salutations to the friend of all",             mantraD:"ॐ मित्राय नमः" },
+  { pose:"Hasta Uttanasana",      sub:"Raised arms pose",             breath:"Inhale", breathClass:"inhale", mantra:"Om Ravaye Namaha",            meaning:"Salutations to the shining one",               mantraD:"ॐ रवये नमः" },
+  { pose:"Hasta Padasana",        sub:"Hand to foot pose",            breath:"Exhale", breathClass:"exhale", mantra:"Om Suryaya Namaha",           meaning:"Salutations to the dispeller of darkness",     mantraD:"ॐ सूर्याय नमः" },
+  { pose:"Ashwa Sanchalanasana",  sub:"Equestrian — right leg back",  breath:"Inhale", breathClass:"inhale", mantra:"Om Bhanave Namaha",           meaning:"Salutations to the one who illumines",         mantraD:"ॐ भानवे नमः" },
+  { pose:"Dandasana",             sub:"Stick pose / plank",           breath:"Hold",   breathClass:"hold",   mantra:"Om Khagaya Namaha",           meaning:"Salutations to the one who moves through sky", mantraD:"ॐ खगाय नमः" },
+  { pose:"Ashtanga Namaskara",    sub:"Salute with eight limbs",      breath:"Exhale", breathClass:"exhale", mantra:"Om Pushne Namaha",            meaning:"Salutations to the giver of nourishment",     mantraD:"ॐ पूष्णे नमः" },
+  { pose:"Bhujangasana",          sub:"Cobra pose",                   breath:"Inhale", breathClass:"inhale", mantra:"Om Hiranya Garbhaya Namaha",  meaning:"Salutations to the golden cosmic self",        mantraD:"ॐ हिरण्यगर्भाय नमः" },
+  { pose:"Adho Mukha Svanasana",  sub:"Downward facing dog",          breath:"Exhale", breathClass:"exhale", mantra:"Om Marichaye Namaha",         meaning:"Salutations to the lord of the dawn",          mantraD:"ॐ मरीचये नमः" },
+  { pose:"Ashwa Sanchalanasana",  sub:"Equestrian — left leg back",   breath:"Inhale", breathClass:"inhale", mantra:"Om Adityaya Namaha",          meaning:"Salutations to the son of cosmic mother",      mantraD:"ॐ आदित्याय नमः" },
+  { pose:"Hasta Padasana",        sub:"Hand to foot pose",            breath:"Exhale", breathClass:"exhale", mantra:"Om Savitre Namaha",           meaning:"Salutations to the lord of creation",          mantraD:"ॐ सवित्रे नमः" },
+  { pose:"Hasta Uttanasana",      sub:"Raised arms pose",             breath:"Inhale", breathClass:"inhale", mantra:"Om Arkaya Namaha",            meaning:"Salutations to the form of the sun",           mantraD:"ॐ अर्काय नमः" },
+  { pose:"Pranamasana",           sub:"Prayer pose",                  breath:"Exhale", breathClass:"exhale", mantra:"Om Bhaskaraya Namaha",        meaning:"Salutations to the one who leads to enlightenment", mantraD:"ॐ भास्कराय नमः" }
+];
+
+const CIRC = 2 * Math.PI * 98;
+const KEY  = "surya-v36";
+
+/* ── Config ─────────────────────────────────────────────────── */
+let cfg = {
+  programName   : "सूर्यसारथी - १०८",
+  theme         : "system",
+  dailyIncrease : 4,
+  maxSets       : 108,
+  breakEvery    : 12,
+  voiceOn       : true,
+  mantrasOn     : true,
+  breathOn      : true,
+  autoOn        : true,
+  poseSeconds   : 5,
+  graceSeconds  : 5,
+  chartDays         : 7,
+  chartMode         : "bar",
+  pranayamaMinutes  : 35,
+  pranayamaAuto     : true,
+  pranaLang         : "en",
+  alarmOn           : true,
+  alarmHour         : 5,
+  alarmMinute       : 0,
+  quoteLang         : "hi",
+  daytimeNotifOn    : true,
+  userName          : "Vaibhav",
+  dietType          : "veg",
+  dietNotifOn       : true,
+  autoShowDietPostGoal: true,
+};
+
+/* ── Data (persisted) ───────────────────────────────────────── */
+let data = {
+  history          : {},   // { "YYYY-MM-DD": { sets, timeMs, goal } }
+  totalAllTime     : 0,
+  totalTimeMs      : 0,
+  programDay       : 1,
+  lastDate         : "",
+  baseGoal         : 0,    // today's goal (editable); 0 = auto from programDay
+  goalDate         : "",   // date baseGoal was set for; resets +4 on new day
+  lastGoal         : 0,    // goal of last completed day — used for exact +4 calc
+  lastCompletedGoal: 0,    // exact goal of last completed day
+  lastRecoveryAt   : 0,    // totalAllTime count at which last recovery was triggered
+};
+
+/* ── Session (runtime) ──────────────────────────────────────── */
+let sess = {
+  active   : false,
+  paused   : false,
+  step     : -1,
+  breakAcc : 0,
+  // session stopwatch (today's goal timer)
+  sessionStart  : 0,   // Date.now() when session started
+  sessionPaused : 0,   // accumulated ms while paused
+  pauseAt       : 0,   // Date.now() when paused
+};
+
+let poseRafHandle  = null;  // rAF for pose countdown bar
+let poseTimerStart = 0;
+let poseElapsed    = 0;
+let clockRaf       = null;  // rAF for live clock display
+let voiceMuted     = false;
+
+/* ── Helpers ─────────────────────────────────────────────────── */
+const todayKey  = () => new Date().toISOString().slice(0,10);
+const dayKey    = n  => { const d=new Date(); d.setDate(d.getDate()-n); return d.toISOString().slice(0,10); };
+const todayDone = () => (data.history[todayKey()]||{}).sets || 0;
+const vib       = ms => { try { navigator.vibrate&&navigator.vibrate(ms); }catch(e){} };
+const setStatus = t  => document.getElementById("status").textContent = t;
+
+function fmtTime(ms) {
+  const totalSec = Math.floor(ms/1000);
+  const h = Math.floor(totalSec/3600);
+  const m = Math.floor((totalSec%3600)/60);
+  const s = totalSec % 60;
+  if(h>0) return h+"h "+String(m).padStart(2,"0")+"m "+String(s).padStart(2,"0")+"s";
+  if(m>0) return m+"m "+String(s).padStart(2,"0")+"s";
+  return s+"s";
+}
+
+/* ── MET & Calories calculations ───────────────────────────── */
+function getMetForPoseSec(poseSec) {
+  return 12; // Standard MET for 1 round of Surya Namaskara
+}
+
+function calcSetCalories(sets, poseSec, weightKg) {
+  if(!sets || sets <= 0) return 0;
+  // Standard calorie burn calculation per set (~13.9 kcal/set @ 66kg)
+  // Standardized so changing seconds per pose (pace) does NOT alter calorie count
+  const weight = weightKg || (typeof cfg !== "undefined" && cfg.userWeight) || 66;
+  const met = 12; // Standard MET for Surya Namaskara
+
+  // Standard MET formula: Calories/min = (MET * 3.5 * Weight) / 200
+  const calPerMin = (met * 3.5 * weight) / 200;
+
+  // Standard set duration = 1 minute per set (12 poses @ standard benchmark)
+  const durationMinutes = sets;
+
+  // Total Calories burned
+  return calPerMin * durationMinutes;
+}
+
+function fmtCalories(kcal) {
+  if(!kcal || kcal <= 0) return "0 kcal";
+  if(kcal >= 1000) return (kcal / 1000).toFixed(1) + "k kcal";
+  if(kcal < 10) return kcal.toFixed(1) + " kcal";
+  return Math.round(kcal) + " kcal";
+}
+
+function todayCalories() {
+  const done = todayDone();
+  return calcSetCalories(done, 5, cfg.userWeight || 66);
+}
+
+function totalCalories() {
+  let totalFromHistory = 0;
+  const keys = Object.keys(data.history || {});
+  keys.forEach(k => {
+    const rec = data.history[k];
+    const sets = typeof rec === "number" ? rec : (rec.sets || 0);
+    if(sets > 0) {
+      totalFromHistory += calcSetCalories(sets, 5, cfg.userWeight || 66);
+    }
+  });
+  const totalFromAllTime = calcSetCalories(data.totalAllTime || 0, 5, cfg.userWeight || 66);
+  return Math.max(totalFromHistory, totalFromAllTime);
+}
+
+function computeStreak() {
+  let s=0;
+  for(let i=0;;i++){ if(todayDoneFor(dayKey(i))>0) s++; else break; }
+  return s;
+}
+function todayDoneFor(key) { return (data.history[key]||{}).sets || 0; }
+
+function getLastCompletedGoal() {
+  if(data.lastCompletedGoal && data.lastCompletedGoal > 0)
+    return data.lastCompletedGoal;
+  // Search history backwards for most recent completed goal
+  const keys = Object.keys(data.history || {}).sort();
+  for(let i = keys.length - 1; i >= 0; i--) {
+    const rec = data.history[keys[i]];
+    if(rec && rec.goal > 0) {
+      if(rec.sets >= rec.goal) return rec.goal;
+    }
+  }
+  if(data.lastGoal > 0) return data.lastGoal;
+  return 0;
+}
+
+function todayGoal() {
+  const tk = todayKey();
+  // 1. If a manual goal was explicitly set for today
+  if(data.baseGoal > 0 && data.goalDate === tk)
+    return Math.min(data.baseGoal, cfg.maxSets);
+
+  // 2. If today already has a recorded goal in history
+  if(data.history[tk] && data.history[tk].goal > 0) {
+    const lastComp = getLastCompletedGoal();
+    // If no past completed history exists, and today's auto goal was set to 8 with 0 sets completed, correct it to 4
+    if(lastComp === 0 && data.history[tk].goal === 8 && (data.history[tk].sets || 0) === 0) {
+      data.history[tk].goal = cfg.dailyIncrease || 4;
+      saveAll();
+    }
+    return Math.min(data.history[tk].goal, cfg.maxSets);
+  }
+
+  // 3. Otherwise: last completed goal + dailyIncrease (+4), capped at maxSets
+  const lastComp = getLastCompletedGoal();
+  if(lastComp > 0) {
+    return Math.min(lastComp + (cfg.dailyIncrease || 4), cfg.maxSets);
+  }
+  
+  // 4. Starting goal for fresh start / Day 1: start at 4 counts!
+  return Math.min(cfg.dailyIncrease || 4, cfg.maxSets);
+}
+
+function setTodayGoal(n) {
+  data.baseGoal   = Math.max(1, Math.min(n, cfg.maxSets));
+  data.goalDate   = todayKey();
+  const tk        = todayKey();
+  if(!data.history[tk]) data.history[tk] = { sets: 0, timeMs: 0, goal: data.baseGoal };
+  else data.history[tk].goal = data.baseGoal;
+  data.lastGoal   = data.baseGoal;
+  data.programDay = Math.max(1, Math.round(data.baseGoal / (cfg.dailyIncrease || 4)));
+  saveAll();
+}
+
+/* ── Persist ─────────────────────────────────────────────────── */
+function loadAll() {
+  // All previous versions — newest first so we get the most recent data
+  // ALL versions ever released — newest first so best data is picked first
+  const OLD_KEYS = [
+    "surya-v35","surya-v34","surya-v33","surya-v32","surya-v31","surya-v30","surya-v29",
+    "surya-v28","surya-v27","surya-v26","surya-v25","surya-v24","surya-v23",
+    "surya-v22","surya-v21","surya-v20","surya-v19","surya-v18","surya-v17",
+    "surya-v16","surya-v15","surya-v14","surya-v13","surya-v12","surya-v11",
+    "surya-v10","surya-v9","surya-v8","surya-v7","surya-v6","surya-v5",
+    "surya-v4","surya-v3","surya-v2","surya-v1","surya-namaskara-data-v1","surya-v0"
+  ];
+
+  // Helper: parse any save format → { cfg, data }
+  function parseSave(raw) {
+    const sv = JSON.parse(raw);
+    if(sv.data && typeof sv.data === "object") {
+      return { cfg: sv.cfg||{}, data: sv.data };
+    } else if(sv.history || sv.totalAllTime !== undefined) {
+      return { cfg:{}, data:{
+        history      : sv.history      || {},
+        totalAllTime : sv.totalAllTime || 0,
+        totalTimeMs  : sv.totalTimeMs  || 0,
+        programDay   : sv.programDay   || 1,
+        lastDate     : sv.lastDate     || "",
+        baseGoal     : sv.baseGoal     || 0,
+        goalDate     : sv.goalDate     || "",
+        lastGoal     : sv.lastGoal     || 0,
+        lastCompletedGoal: sv.lastCompletedGoal || 0,
+        lastRecoveryAt: sv.lastRecoveryAt || 0,
+      }};
+    }
+    return null;
+  }
+
+  // Helper: normalise a history record to { sets, timeMs, goal }
+  function normRec(v) {
+    if(typeof v === "number") return { sets:v, timeMs:0, goal:0 };
+    return { sets:v.sets||0, timeMs:v.timeMs||0, goal:v.goal||0 };
+  }
+
+  // Helper: merge one history object into data.history (keep max sets, sum time)
+  function mergeHistory(src) {
+    Object.keys(src).forEach(date => {
+      const r = normRec(src[date]);
+      if(!data.history[date]) {
+        data.history[date] = r;
+      } else {
+        data.history[date].sets   = Math.max(data.history[date].sets||0,   r.sets);
+        data.history[date].timeMs = Math.max(data.history[date].timeMs||0, r.timeMs);
+        if(!data.history[date].goal && r.goal) data.history[date].goal = r.goal;
+      }
+    });
+  }
+
+  try {
+    const TODAY = new Date().toISOString().slice(0,10);
+    const curRaw = localStorage.getItem(KEY);
+
+    if(curRaw) {
+      // ── Current key exists — load it exactly, protect today's data ──────
+      const sv = parseSave(curRaw);
+      if(sv) {
+        Object.assign(cfg,  sv.cfg  || {});
+        Object.assign(data, sv.data || {});
+        Object.keys(data.history).forEach(k => {
+          data.history[k] = normRec(data.history[k]);
+        });
+        // totalAllTime, totalTimeMs, today's sets and time are AUTHORITATIVE
+        // as stored — never recompute, never override. completeSet() is the
+        // only function allowed to increment these.
+      }
+
+    } else {
+      // ── First-time load with new key — one-time migration from old keys ──
+      const allRaws = [];
+      for(const ok of OLD_KEYS) {
+        const r = localStorage.getItem(ok);
+        if(r) allRaws.push({ key:ok, raw:r });
+      }
+
+      if(allRaws.length > 0) {
+        const parsed = [];
+        for(const s of allRaws) {
+          try {
+            const p = parseSave(s.raw);
+            if(p) parsed.push({ key:s.key, ...p });
+          } catch(e) { console.warn("Could not parse", s.key); }
+        }
+
+        if(parsed.length > 0) {
+          // ── Pick best base: highest totalAllTime = most complete ──────────
+          parsed.sort((a,b) =>
+            (b.data.totalAllTime||0) - (a.data.totalAllTime||0)
+          );
+          const base = parsed[0];
+          Object.assign(cfg,  base.cfg  || {});
+          Object.assign(data, base.data || {});
+          Object.keys(data.history).forEach(k => {
+            data.history[k] = normRec(data.history[k]);
+          });
+
+          // ── Snapshot today's values from the BEST save BEFORE merging ────
+          // "Best" for today = highest sets count for today's date
+          let todayBestSets  = data.history[TODAY]?.sets   || 0;
+          let todayBestTime  = data.history[TODAY]?.timeMs || 0;
+          let todayBestGoal  = data.history[TODAY]?.goal   || 0;
+          let bestTotalSets  = data.totalAllTime || 0;
+          let bestTotalTime  = data.totalTimeMs  || 0;
+
+          // Check all old saves for a higher today-count
+          for(const p of parsed) {
+            const tr = normRec(p.data.history?.[TODAY] || {});
+            if(tr.sets > todayBestSets) {
+              todayBestSets = tr.sets;
+              todayBestTime = Math.max(todayBestTime, tr.timeMs);
+            }
+            if((p.data.totalAllTime||0) > bestTotalSets)
+              bestTotalSets = p.data.totalAllTime;
+            if((p.data.totalTimeMs||0)  > bestTotalTime)
+              bestTotalTime = p.data.totalTimeMs;
+          }
+
+          // ── Merge ONLY missing past dates — never overwrite existing ──────
+          for(let i = 1; i < parsed.length; i++) {
+            const srcHist = parsed[i].data.history || {};
+            Object.keys(srcHist).forEach(date => {
+              if(date === TODAY) return;      // handle today separately
+              if(!data.history[date]) {
+                data.history[date] = normRec(srcHist[date]);
+              }
+              // Existing past dates — left untouched (base is authoritative)
+            });
+          }
+
+          // ── Restore today's best values (highest sets wins) ───────────────
+          data.history[TODAY] = {
+            sets  : todayBestSets,
+            timeMs: todayBestTime,
+            goal  : todayBestGoal,
+          };
+
+          // ── Restore totals — never reduce them ───────────────────────────
+          data.totalAllTime = bestTotalSets;
+          data.totalTimeMs  = bestTotalTime;
+
+          // ── Restore today's manual goal if any save has one for today ─────
+          for(const s of allRaws) {
+            try {
+              const p = parseSave(s.raw);
+              if(!p) continue;
+              if(p.data.goalDate === TODAY && (p.data.baseGoal||0) > 0) {
+                data.baseGoal = p.data.baseGoal;
+                data.goalDate = TODAY;
+                data.lastGoal = p.data.lastGoal || p.data.baseGoal;
+                break;
+              }
+            } catch(e) {}
+          }
+
+          console.log(
+            "ONE-TIME migration complete | sources:", parsed.length,
+            "| totalSets:", data.totalAllTime,
+            "| totalTime:", Math.round((data.totalTimeMs||0)/60000) + "min",
+            "| today sets:", todayBestSets,
+            "| history days:", Object.keys(data.history).length
+          );
+
+          // Save under new key immediately
+          try { localStorage.setItem(KEY, JSON.stringify({cfg, data})); } catch(e){}
+
+          // Delete old keys — migration runs exactly once
+          for(const s of allRaws) {
+            try { localStorage.removeItem(s.key); } catch(e){}
+          }
+        }
+      }
+    }
+  } catch(e) { console.error("loadAll error:", e); }
+
+  if (!cfg.pranayamaMinutes || cfg.pranayamaMinutes === 28) {
+    cfg.pranayamaMinutes = 35;
+  }
+
+  const today = todayKey();
+  if(data.lastDate && data.lastDate !== today) {
+    // Midnight / New Day reset: Re-enable Auto Phase Speed (Adaptive Pace)
+    cfg.autoPaceMode = true;
+    delete data.manualPaceOverrideDate;
+
+    // Count actual calendar days elapsed (handles multi-day skips)
+    const last = new Date(data.lastDate + "T00:00:00");
+    const now  = new Date(today         + "T00:00:00");
+    const daysMissed = Math.max(1, Math.round((now - last) / 86400000));
+
+    data.programDay = (data.programDay||1) + daysMissed;
+
+    // For each skipped day in the gap — record non-compounded goal
+    const lastComp = getLastCompletedGoal();
+    for(let d = 1; d < daysMissed; d++) {
+      const skipDate = new Date(last.getTime() + d * 86400000)
+        .toISOString().slice(0, 10);
+      if(!data.history[skipDate]) {
+        const skipGoal = Math.min(lastComp + (cfg.dailyIncrease || 4), cfg.maxSets);
+        data.history[skipDate] = { sets: 0, timeMs: 0, goal: skipGoal };
+      }
+    }
+
+    if(data.baseGoal > 0 && data.goalDate === data.lastDate) {
+      data.lastGoal = data.baseGoal;
+    } else {
+      for(let d = 1; d <= daysMissed + 1; d++) {
+        const check = new Date(now.getTime() - d * 86400000)
+          .toISOString().slice(0, 10);
+        const rec = data.history[check];
+        if(rec && rec.goal) { data.lastGoal = rec.goal; break; }
+      }
+    }
+
+    data.baseGoal = 0;
+    data.goalDate = "";
+  }
+  data.lastDate = today;
+
+  // Make sure today's history entry has a recorded goal
+  if(!data.history[today]) {
+    data.history[today] = { sets: 0, timeMs: 0, goal: todayGoal() };
+  } else if(!data.history[today].goal) {
+    data.history[today].goal = todayGoal();
+  }
+
+  voiceMuted = !cfg.voiceOn;
+  try { cleanupOldWorkoutReels(); } catch(e){}
+  if (typeof applyTheme === "function") applyTheme(cfg.theme || "system");
+}
+function saveAll() {
+  try { localStorage.setItem(KEY, JSON.stringify({cfg,data})); }
+  catch(e){ setStatus("Storage full"); }
+  if (typeof syncToSQLite === "function") syncToSQLite();
+}
+
+/* ── Voice ───────────────────────────────────────────────────── */
+let voices=[], hiVoice=null;
+function pickBestVoice() {
+  voices = speechSynthesis.getVoices();
+  hiVoice =
+    voices.find(v=>v.lang==="sa-IN") ||
+    voices.find(v=>v.lang==="hi-IN"&&v.localService) ||
+    voices.find(v=>v.lang==="hi-IN") ||
+    voices.find(v=>v.lang.startsWith("hi")) ||
+    voices.find(v=>v.lang.startsWith("en-IN")) ||
+    voices.find(v=>v.lang.startsWith("en")) || null;
+  if(hiVoice) setStatus("Voice: "+hiVoice.name+" ("+hiVoice.lang+")");
+}
+window.speechSynthesis.onvoiceschanged = pickBestVoice;
+if(speechSynthesis.getVoices().length>0) pickBestVoice();
+
+/* ── Speech queue — no cancel() races ───────────────────────── */
+// All utterances go through speakQ so they play one after another
+// without cancelling each other.
+const speechQ = [];
+let speechBusy = false;
+
+function qFlush() {
+  if(speechBusy || speechQ.length === 0) return;
+  speechBusy = true;
+  const utt = speechQ.shift();
+  const origEnd = utt.onend;
+  utt.onend = (e) => {
+    speechBusy = false;
+    if(origEnd) origEnd(e);
+    qFlush();
+  };
+  utt.onerror = () => { speechBusy = false; qFlush(); };
+  try{ speechSynthesis.speak(utt); }catch(e){ speechBusy=false; qFlush(); }
+}
+
+function qSpeak(utt) {
+  speechQ.push(utt);
+  qFlush();
+}
+
+function qClear() {
+  speechQ.length = 0;
+  speechBusy = false;
+  try{ speechSynthesis.cancel(); }catch(e){}
+}
+
+function makeMantraUtt(text) {
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang  = hiVoice ? hiVoice.lang : "hi-IN";
+  if(hiVoice) u.voice = hiVoice;
+  const sec = cfg.poseSeconds || 3;
+  // Dynamically scale speed: 2s/pose -> 1.35x rate; 3s -> 1.10x; 5s+ -> 0.85x
+  u.rate  = sec <= 2 ? 1.35 : (sec <= 3 ? 1.10 : 0.85);
+  u.pitch = 0.95; u.volume = 1.0;
+  return u;
+}
+
+function makeEnUtt(text) {
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang  = "en-IN";
+  const sec = cfg.poseSeconds || 3;
+  u.rate  = sec <= 2 ? 1.35 : (sec <= 3 ? 1.10 : 0.85);
+  u.pitch = 1.05; u.volume = 1.0;
+  const ev = voices.find(v=>v.lang==="en-IN") || voices.find(v=>v.lang.startsWith("en")) || null;
+  if(ev) u.voice = ev;
+  return u;
+}
+
+// Language-aware utterance for pranayama instructions
+function makePranaUtt(text) {
+  const lang = cfg.pranaLang || "en";
+  const u = new SpeechSynthesisUtterance(text);
+  const vList = speechSynthesis.getVoices();
+
+  if(lang === "hi") {
+    u.lang   = "hi-IN"; u.rate = 0.75; u.pitch = 1.0; u.volume = 1.0;
+    const hv = vList.find(v=>v.lang==="hi-IN"&&v.localService) ||
+               vList.find(v=>v.lang==="hi-IN") ||
+               vList.find(v=>v.lang.startsWith("hi")) || null;
+    if(hv) u.voice = hv;
+  } else if(lang === "mr") {
+    u.lang   = "hi-IN"; u.rate = 0.72; u.pitch = 1.0; u.volume = 1.0;
+    const hv = vList.find(v=>v.lang==="hi-IN") || null;
+    if(hv) u.voice = hv;
+  } else {
+    u.lang   = "en-IN"; u.rate = 0.82; u.pitch = 1.0; u.volume = 1.0;
+    const ev = vList.find(v=>v.lang==="en-IN") || vList.find(v=>v.lang.startsWith("en")) || null;
+    if(ev) u.voice = ev;
+  }
+  return u;
+}
+
+// Speak mantra (Sanskrit) then optional breath cue (English) — queued
+function speakMantra(text, breath="", delay=0) {
+  if(voiceMuted || !window.speechSynthesis) return;
+  const doMantra = cfg.mantrasOn !== false;
+  const doBreath = cfg.breathOn  !== false && breath;
+  if(!doMantra && !doBreath) return;
+
+  // Clear previous pose's queued speech so fast pose transitions don't backlog
+  qClear();
+
+  setTimeout(()=>{
+    if(doMantra) qSpeak(makeMantraUtt(text));
+    if(doBreath) qSpeak(makeEnUtt(breath));
+  }, delay);
+}
+
+// Speak English text — queued
+function speakText(text, delay=0) {
+  if(voiceMuted || !window.speechSynthesis) return;
+  setTimeout(()=>{ qSpeak(makeEnUtt(text)); }, delay);
+}
+
+// Get pranayama text in the right language from a step object OR plain string
+function getPranaText(textOrObj) {
+  if(typeof textOrObj === "string") return textOrObj;
+  const lang = cfg.pranaLang || "en";
+  if(lang === "hi") return textOrObj.hi || textOrObj.en;
+  if(lang === "mr") return textOrObj.mr || textOrObj.hi || textOrObj.en;
+  return textOrObj.en;
+}
+
+// Speak pranayama instruction in selected language — queued
+function speakPrana(textOrObj, delay=0) {
+  if(voiceMuted || !window.speechSynthesis) return;
+  const text = getPranaText(textOrObj);
+  setTimeout(()=>{ qSpeak(makePranaUtt(text)); }, delay);
+}
+
+
+/* ── Screen Wake Lock ────────────────────────────────────────── */
+let wakeLock = null;
+
+async function acquireWakeLock() {
+  if (!('wakeLock' in navigator)) return; // not supported
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release', () => {
+      wakeLock = null;
+      // Re-acquire if session still active (OS released it on tab-hide)
+    });
+    setStatus('Screen will stay on during practice');
+  } catch(e) {
+    // Low battery or other OS refusal — silent fail, not critical
+    console.warn('Wake lock denied:', e.message);
+  }
+}
+
+async function releaseWakeLock() {
+  if (wakeLock) {
+    try { await wakeLock.release(); } catch(e) {}
+    wakeLock = null;
+  }
+}
+
+// Re-acquire when app comes back to foreground (OS auto-releases on hide)
+// visibilitychange handled in unified handler below
+
+/* ── DND Banner ──────────────────────────────────────────────── */
+function showDndBanner() {
+  const b = document.getElementById('dnd-banner');
+  if (b) b.classList.add('show');
+}
+function hideDndBanner() {
+  const b = document.getElementById('dnd-banner');
+  if (b) b.classList.remove('show');
+}
+document.addEventListener('DOMContentLoaded', () => {
+  const dismissBtn = document.getElementById('dnd-dismiss');
+  if (dismissBtn) dismissBtn.addEventListener('click', () => hideDndBanner());
+});
+
+/* ── Adaptive Pace Engine & Auto Phase Speed ─────────────────── */
+function getPhasePoseSeconds() {
+  if (typeof cfg !== "undefined" && cfg.autoPaceMode !== false) {
+    const done = typeof todayDone === "function" ? todayDone() : 0;
+    const goal = typeof todayGoal === "function" ? todayGoal() : 12;
+    const pct = goal > 0 ? (done / goal) : 0;
+
+    if (pct < 0.33) {
+      return 2.5; // Phase 1: Cardio Surge (first 33% of sets)
+    } else if (pct < 0.75) {
+      return 4.0; // Phase 2: Endurance Surge (33% to 75% of sets)
+    } else {
+      return 2.2; // Phase 3: Mindful Burnout (final 25% of sets)
+    }
+  }
+  return (typeof cfg !== "undefined" && cfg.poseSeconds) ? cfg.poseSeconds : 3.0;
+}
+
+function updatePhaseBadgeUI() {
+  const badge = document.getElementById("phase-badge");
+  if (!badge) return;
+
+  if (typeof cfg !== "undefined" && cfg.autoPaceMode !== false && typeof sess !== "undefined" && sess.active && !sess.paused) {
+    const done = typeof todayDone === "function" ? todayDone() : 0;
+    const goal = typeof todayGoal === "function" ? todayGoal() : 12;
+    const pct = goal > 0 ? (done / goal) : 0;
+
+    let text = "";
+    let color = "";
+    if (pct < 0.33) {
+      text = "⚡ Phase 1: Cardio Surge (2.5s)";
+      color = "#06B6D4";
+    } else if (pct < 0.75) {
+      text = "🔥 Phase 2: Endurance Surge (4.0s)";
+      color = "#F59E0B";
+    } else {
+      text = "🧘 Phase 3: Mindful Burnout (2.2s)";
+      color = "#10B981";
+    }
+
+    badge.textContent = text;
+    badge.style.borderColor = color;
+    badge.style.color = color;
+    badge.style.boxShadow = `0 0 14px ${color}66`;
+    badge.style.display = "inline-flex";
+  } else {
+    badge.style.display = "none";
+  }
+}
+
+/* ── Pose countdown timer ────────────────────────────────────── */
+function startPoseTimer() {
+  clearPoseTimer();
+  if(!cfg.autoOn) return;
+  poseTimerStart = Date.now();   // always fresh — pace change fix
+  poseElapsed    = 0;
+  document.getElementById("tbar-wrap").style.display="block";
+  const sec = getPhasePoseSeconds();
+  const dur = sec * 1000;
+  updatePhaseBadgeUI();
+  function tick() {
+    if(!sess.active||sess.paused) return;
+    poseElapsed = Date.now() - poseTimerStart;
+    const frac  = Math.min(1, poseElapsed / dur);
+    document.getElementById("tbar").style.width=(100-frac*100)+"%";
+    if(frac>=1){ poseElapsed=0; advanceStep(); return; }
+    poseRafHandle = requestAnimationFrame(tick);
+  }
+  poseRafHandle = requestAnimationFrame(tick);
+}
+function clearPoseTimer() {
+  if(poseRafHandle){ cancelAnimationFrame(poseRafHandle); poseRafHandle=null; }
+  poseElapsed=0;
+  const tb=document.getElementById("tbar");
+  if(tb) tb.style.width="100%";
+  updatePhaseBadgeUI();
+}
+
+/* ── Session stopwatch (goal timer) ─────────────────────────── */
+function startClock() {
+  stopClock();
+  function tick() {
+    if(!sess.active||sess.paused) return;
+    updateClockDisplay();
+    clockRaf = requestAnimationFrame(tick);
+  }
+  clockRaf = requestAnimationFrame(tick);
+}
+function stopClock() {
+  if(clockRaf){ cancelAnimationFrame(clockRaf); clockRaf=null; }
+}
+function sessionElapsedMs() {
+  if(!sess.sessionStart) return 0;
+  const running = sess.active&&!sess.paused ? Date.now()-sess.sessionStart-sess.sessionPaused : 0;
+  return running;
+}
+function updateClockDisplay() {
+  const clk=document.getElementById("session-clock");
+  const lbl=document.getElementById("main-label");
+  if(!clk) return;
+  if(sess.active && !sess.paused) {
+    clk.textContent = fmtTime(sessionElapsedMs());
+  } else if(sess.paused) {
+    clk.textContent = fmtTime(sessionElapsedMs());
+  } else {
+    clk.textContent = "";
+  }
+}
+
+function startFreshPracticeSession() {
+  sess.active=true; sess.paused=false; sess.step=0;
+  sess.sessionStart=Date.now(); sess.sessionPaused=0; sess.pauseAt=0;
+  poseElapsed=0;
+  speakMantra(STEPS[0].mantraD, STEPS[0].breath);
+  startPoseTimer(); startClock(); vib(20);
+  acquireWakeLock();
+  showDndBanner();
+  document.getElementById("main-label").textContent="⏸ Pause";
+  render();
+}
+
+/* ── Session logic ───────────────────────────────────────────── */
+function handleMainBtn() {
+  if(!sess.active) {
+    const done = todayDone(), goal = todayGoal();
+    const isGoalLocked = done >= goal && goal > 0;
+    if(isGoalLocked) {
+      vib(30);
+      const lang = cfg.pranaLang || "en";
+      const msg = lang === "hi"
+        ? "🎯 आज का सूर्य नमस्कार लक्ष्य पूरा हो गया है! नया लक्ष्य आज रात 12:00 बजे (12 AM) अनलॉक होगा (सुबह 5 बजे के अभ्यास के लिए तैयार)। 🔒"
+        : lang === "mr"
+        ? "🎯 आजचे सूर्य नमस्कार ध्येय पूर्ण झाले आहे! नवीन ध्येय आज रात्री 12:00 वाजता अनलॉक होईल (सकाळी 5 वाजताच्या अभ्यासासाठी तयार). 🔒"
+        : "🎯 Today's Surya Namaskara target complete! Unlocks tonight at 12:00 AM Midnight (Ready for 5:00 AM practice). 🔒";
+      alert(msg);
+      return;
+    }
+    if(checkAppLockState()) return;
+
+    // Unlock Speech Synthesis immediately on click gesture to prevent mobile browser silent muting
+    if (window.speechSynthesis) {
+      try {
+        window.speechSynthesis.resume();
+        const unlockUtterance = new SpeechSynthesisUtterance(" ");
+        unlockUtterance.volume = 0.01;
+        window.speechSynthesis.speak(unlockUtterance);
+      } catch(e){}
+    }
+
+    // Show Daily Gita Motivational Quote first before starting practice
+    showGitaQuoteModal(false);
+    return;
+  }
+  if(!sess.paused) {
+    // Pause
+    sess.paused=true; sess.pauseAt=Date.now();
+    clearPoseTimer(); stopClock();
+    releaseWakeLock();
+    document.getElementById("main-label").textContent="▶ Resume";
+  } else {
+    // Resume
+    sess.paused=false;
+    sess.sessionPaused += Date.now()-sess.pauseAt;
+    poseTimerStart = Date.now(); // reset pose timer on resume
+    startPoseTimer(); startClock();
+    acquireWakeLock();
+    document.getElementById("main-label").textContent="⏸ Pause";
+  }
+}
+
+function advanceStep() {
+  clearPoseTimer();
+  if(!sess.active) return;
+  const next=sess.step+1;
+  if(next>=12){ completeSet(); return; }
+  sess.step=next;
+
+  // Auto-capture key exercise movement for reel marketing video
+  if (!sess.capturedMovements) sess.capturedMovements = [];
+  if (STEPS[next]) {
+    sess.capturedMovements.push({
+      stepIndex: next,
+      poseName: STEPS[next].pose,
+      mantra: STEPS[next].mantraD,
+      breath: STEPS[next].breath,
+      timestamp: Date.now()
+    });
+  }
+
+  speakMantra(STEPS[next].mantraD, STEPS[next].breath);
+  startPoseTimer(); render();
+}
+
+function completeSet() {
+  vib([30,30,60]);
+  const today=todayKey();
+  const _g = todayGoal();
+  if(!data.history[today]) data.history[today]={ sets:0, timeMs:0, goal:_g };
+  data.history[today].sets += 1;
+  data.history[today].goal = _g;
+  data.lastGoal = _g;
+  data.totalAllTime += 1;
+  sess.breakAcc += 1;
+
+  const done=todayDone(), goal=todayGoal();
+  // Speak: Om (Sanskrit) then "Round N" in English
+  setTimeout(()=>{
+    qClear();
+    qSpeak(makeMantraUtt("ॐ"));
+    qSpeak(makeEnUtt("Round " + done));
+  }, 300);
+
+  // ── Goal reached: Lock today's goal immediately ───────────
+  if(done >= goal) {
+    data.lastCompletedGoal = goal;
+    saveAll();
+    finishSession(true);
+    return;
+  }
+
+  saveAll();
+
+  // ── Lifetime milestone: every 1000 sets (1000, 2000, 3000...) ──────────────
+  if (data.totalAllTime > 0 && data.totalAllTime % 1000 === 0) {
+    const mCount = data.totalAllTime;
+    setTimeout(() => {
+      const name = cfg.userName || "Vaibhav";
+      speakText("Congratulations " + name + "! Incredible milestone achieved: " + mCount + " total Surya Namaskara completed!");
+      autoGenerateWorkoutReel({
+        type: "lifetime_milestone",
+        todaySets: done,
+        totalSets: mCount,
+        name: name
+      });
+    }, 1500);
+  }
+
+  // ── Recovery milestone: every 400 sets ──────────────────────
+  const RECOVERY_EVERY = 400;
+  const lastRecov = data.lastRecoveryAt || 0;
+  if(data.totalAllTime > 0 &&
+     data.totalAllTime % RECOVERY_EVERY === 0 &&
+     data.totalAllTime !== lastRecov) {
+    data.lastRecoveryAt = data.totalAllTime;
+    saveAll();
+    finishSession(false);
+    setTimeout(()=>showRecovery(data.totalAllTime), 400);
+    return;
+  }
+
+  // Break reminder (every N sets within session)
+  if(sess.breakAcc>0 && sess.breakAcc%cfg.breakEvery===0) {
+    finishSession(false);
+    setTimeout(()=>showBreak(done), 400);
+    return;
+  }
+
+  // Grace period before next set
+  sess.step=0;
+  startGrace();
+}
+
+/* ── Grace countdown between rounds ─────────────────────────── */
+let graceRaf    = null;
+let graceStart  = 0;
+let graceActive = false;
+
+function startGrace() {
+  clearGrace();
+  graceActive = true;
+  graceStart  = Date.now();
+  const dur   = cfg.graceSeconds * 1000;
+
+  // Announce rest time once
+  setTimeout(()=>{
+    qSpeak(makeEnUtt("Rest. Next round in " + cfg.graceSeconds + " seconds."));
+  }, 500);
+
+  const el = document.getElementById("grace-bar");
+  const wt = document.getElementById("grace-wrap");
+  const ct = document.getElementById("grace-count");
+  if(wt) wt.style.display = "flex";
+
+  function tick() {
+    if(!graceActive) return;
+    const elapsed = Date.now() - graceStart;
+    const frac    = Math.min(1, elapsed / dur);
+    const secsLeft = Math.ceil((dur - elapsed) / 1000);
+    if(el) el.style.width = (frac * 100) + "%";
+    if(ct) ct.textContent = secsLeft > 0 ? secsLeft : "";
+    if(frac >= 1) {
+      clearGrace();
+      beginNextSet();
+      return;
+    }
+    graceRaf = requestAnimationFrame(tick);
+  }
+  graceRaf = requestAnimationFrame(tick);
+}
+
+function clearGrace() {
+  if(graceRaf){ cancelAnimationFrame(graceRaf); graceRaf = null; }
+  graceActive = false;
+  const wt = document.getElementById("grace-wrap");
+  if(wt) wt.style.display = "none";
+}
+
+function beginNextSet() {
+  if(!sess.active) return;
+  poseElapsed = 0;
+  speakMantra(STEPS[0].mantraD, STEPS[0].breath);
+  startPoseTimer();
+  render();
+}
+
+let restTimerInterval = null;
+let restSecLeft = 0;
+
+function startPranaRestTransition(durationSec) {
+  if (restTimerInterval) clearInterval(restTimerInterval);
+  restSecLeft = durationSec || 60;
+
+  const banner = document.getElementById("rest-prana-banner");
+  if (!banner) return;
+
+  banner.style.display = "block";
+  updateRestBannerUI(restSecLeft);
+
+  restTimerInterval = setInterval(() => {
+    restSecLeft--;
+    if (restSecLeft <= 0) {
+      clearInterval(restTimerInterval);
+      restTimerInterval = null;
+      banner.style.display = "none";
+      speakText("Rest complete. Starting Pranayama practice now.");
+      setTimeout(() => showPranayama(), 1200);
+      return;
+    }
+    updateRestBannerUI(restSecLeft);
+  }, 1000);
+}
+
+function updateRestBannerUI(secLeft) {
+  const banner = document.getElementById("rest-prana-banner");
+  if (!banner) return;
+  banner.innerHTML = `
+    <div style="background:linear-gradient(135deg,rgba(29,184,127,0.2),rgba(255,215,0,0.15));border:1.5px solid var(--acc);border-radius:14px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <div style="font-size:13px;font-weight:900;color:var(--acc-lt);">🎉 Target Complete! ⏳ Rest &amp; Recover (${secLeft}s left)</div>
+        <div style="font-size:10px;color:var(--txt2);">Take 1 minute rest before starting Pranayama.</div>
+      </div>
+      <button onclick="manualStartPranayamaNow()" style="background:var(--acc);color:#06231A;border:none;border-radius:10px;padding:7px 12px;font-size:12px;font-weight:800;cursor:pointer;white-space:nowrap;">
+        🧘 Start Pranayama Now
+      </button>
+    </div>
+  `;
+}
+
+function manualStartPranayamaNow() {
+  if (restTimerInterval) {
+    clearInterval(restTimerInterval);
+    restTimerInterval = null;
+  }
+  const banner = document.getElementById("rest-prana-banner");
+  if (banner) banner.style.display = "none";
+  showPranayama();
+}
+
+function finishSession(goalDone) {
+  stopClock();
+  clearPoseTimer();
+  // Save today's session time
+  const elapsed = sessionElapsedMs();
+  const today=todayKey();
+  if(!data.history[today]) data.history[today]={ sets:0, timeMs:0 };
+  data.history[today].timeMs = (data.history[today].timeMs||0) + elapsed;
+  data.totalTimeMs = (data.totalTimeMs||0) + elapsed;
+  saveAll();
+
+  clearGrace();
+  sess.active=false; sess.step=-1;
+  releaseWakeLock();
+  hideDndBanner();
+  document.getElementById("main-label").textContent="▶ Start";
+
+  if(goalDone) {
+    data.lastCompletedGoal = todayGoal();
+    saveAll();
+    const todaySets  = todayDone();
+    const totalSets  = data.totalAllTime;
+    const name = cfg.userName || "Vaibhav";
+    const streak = computeStreak();
+
+    let streakMsg = "";
+    const isStreakMilestone = [7, 14, 21, 30, 50, 100].includes(streak);
+    if (streak === 7) {
+      streakMsg = " Outstanding dedication! 7 days continuous Surya Namaskara streak completed! Keep glowing!";
+    } else if (streak === 14) {
+      streakMsg = " Incredible focus! 14 days continuous Surya Namaskara streak achieved! You are building true discipline!";
+    } else if (streak === 21) {
+      streakMsg = " Phenomenal achievement! 21 days continuous Surya Namaskara habit formed! You are transformed!";
+    } else if (streak === 30) {
+      streakMsg = " Extraordinary commitment! 30 days continuous Surya Namaskara streak! You are a true Yogi!";
+    }
+
+    const msg = "Namaste " + name + "! Today's target of " + todaySets + " rounds complete and locked." + streakMsg;
+    setTimeout(()=>speakText(msg), 800);
+
+    // Auto-Generate 20s Workout Marketing Reel on Goal Completion
+    setTimeout(() => {
+      if (typeof autoGenerateWorkoutReel === "function") {
+        autoGenerateWorkoutReel({
+          type: isStreakMilestone ? "streak_milestone" : "goal_complete",
+          todaySets: todaySets,
+          totalSets: totalSets,
+          streakDays: streak,
+          name: name,
+          capturedMovements: sess.capturedMovements || []
+        });
+      }
+    }, 1500);
+
+    if(cfg.pranayamaAuto !== false) {
+      setTimeout(()=>startPranaRestTransition(60), 3000);
+    } else if (cfg.autoShowDietPostGoal !== false) {
+      setTimeout(()=>showDietModal(), 2500);
+    }
+  }
+  render(); updateClockDisplay();
+}
+
+function resetSession() {
+  vib(15);
+  qClear(); clearGrace();
+  // Save whatever time was accumulated before reset
+  if(sess.active && sess.sessionStart) {
+    const elapsed = sessionElapsedMs();
+    const today=todayKey();
+    if(!data.history[today]) data.history[today]={ sets:0, timeMs:0 };
+    data.history[today].timeMs = (data.history[today].timeMs||0) + elapsed;
+    data.totalTimeMs = (data.totalTimeMs||0) + elapsed;
+    saveAll();
+  }
+  clearPoseTimer(); stopClock();
+  releaseWakeLock();
+  hideDndBanner();
+  sess.active=false; sess.paused=false; sess.step=-1;
+  sess.sessionStart=0; sess.sessionPaused=0;
+  document.getElementById("main-label").textContent="▶ Start";
+  document.getElementById("tbar-wrap").style.display="none";
+  render(); updateClockDisplay();
+}
+
+/* ── Break overlay ───────────────────────────────────────────── */
+function showBreak(n) {
+  speakText("Take rest. "+n+" sets complete. Lie in Savasana.");
+  document.getElementById("break-n").textContent=n;
+  document.getElementById("break-ov").classList.add("show");
+}
+
+function showRecovery(total) {
+  vib([60,40,60,40,120]);
+  speakText(
+    "Congratulations! You have completed " + total + " Surya Namaskaras. " +
+    "This is a major milestone. Take a full recovery day tomorrow. " +
+    "Rest, hydrate, and let your body absorb the practice. Om Shanti."
+  );
+  document.getElementById("rec-total").textContent = total;
+  // compute next milestone
+  const RECOVERY_EVERY = 400;
+  document.getElementById("rec-next").textContent = total + RECOVERY_EVERY;
+  document.getElementById("rec-ov").classList.add("show");
+}
+const breakOk = document.getElementById("break-ok");
+if(breakOk) breakOk.addEventListener("click",()=>{
+  const breakOv = document.getElementById("break-ov");
+  if(breakOv) breakOv.classList.remove("show");
+  sess.sessionStart=0; sess.sessionPaused=0;
+  render(); updateClockDisplay();
+});
+
+const recOk = document.getElementById("rec-ok");
+if(recOk) recOk.addEventListener("click",()=>{
+  const recOv = document.getElementById("rec-ov");
+  if(recOv) recOv.classList.remove("show");
+  sess.active=false; sess.step=-1;
+  const mainLbl = document.getElementById("main-label");
+  if(mainLbl) mainLbl.textContent="▶ Start";
+  sess.sessionStart=0; sess.sessionPaused=0;
+  render(); updateClockDisplay();
+});
+
+/* ── Render ──────────────────────────────────────────────────── */
+function render() {
+  const done=todayDone(), goal=todayGoal(), frac=Math.min(1,done/goal);
+  const isGoalLocked = done >= goal && goal > 0;
+  const tomorrowG = Math.min(goal + (cfg.dailyIncrease || 4), cfg.maxSets);
+
+  // Stats row
+  const sToday = document.getElementById("s-today"); if(sToday) sToday.textContent = done;
+  const sGoal = document.getElementById("s-goal"); if(sGoal) sGoal.textContent = isGoalLocked ? (tomorrowG + " 🔒") : goal;
+  const sStreak = document.getElementById("s-streak"); if(sStreak) sStreak.textContent = computeStreak();
+  const sTotal = document.getElementById("s-total"); if(sTotal) sTotal.textContent = data.totalAllTime;
+
+  // Program name + day
+  const progName = document.getElementById("prog-name"); if(progName) progName.textContent = "SURYASARTHI 108";
+  const d=new Date();
+  const dayLbl = document.getElementById("day-label");
+  if(dayLbl) {
+    dayLbl.textContent = "Day "+(data.programDay||1)+" · "+d.toLocaleDateString(undefined,{weekday:"long",month:"short",day:"numeric"});
+  }
+
+  // Render Day 1 Benefits Card if user is on Day 1
+  const benefitsEl = document.getElementById("day1-benefits-card");
+  if(benefitsEl) {
+    const tr = getTrialInfo();
+    if (tr.isTrial && tr.daysElapsed === 0 && !data.hideDay1Benefits) {
+      benefitsEl.style.display = "block";
+      benefitsEl.innerHTML = `
+        <div style="background:linear-gradient(135deg,rgba(255,215,0,0.15),rgba(29,184,127,0.15));border:1.5px solid var(--acc);border-radius:16px;padding:12px 14px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div style="font-size:13px;font-weight:900;color:var(--acc-lt);display:flex;align-items:center;gap:6px">
+              ☀️ Day 1 Welcome: 5 Transformative Benefits of Surya Namaskara
+            </div>
+            <button onclick="dismissBenefitsCard()" style="background:none;border:none;color:var(--muted);font-size:16px;cursor:pointer;padding:0 4px">✕</button>
+          </div>
+          <div style="font-size:11px;color:var(--txt2);line-height:1.5;display:grid;gap:6px">
+            <div>💪 <strong>Whole-Body Fitness:</strong> Tones 288 muscles &amp; flexes spine across 12 dynamic poses.</div>
+            <div>🫁 <strong>Lung Vitality:</strong> Synchronized inhales &amp; exhales maximize oxygen flow.</div>
+            <div>🧠 <strong>Solar Plexus &amp; Focus:</strong> Stimulates Manipura Chakra for razor-sharp concentration.</div>
+            <div>🔥 <strong>Calorie Burn:</strong> Burns ~13.9 kcal per set (~1500 kcal per 108 sets!).</div>
+            <div>🧘 <strong>Hormonal &amp; Stress Balance:</strong> Calms nervous system and regulates melatonin &amp; cortisol.</div>
+          </div>
+        </div>
+      `;
+    } else {
+      benefitsEl.style.display = "none";
+    }
+  }
+
+  // Header Trial / PRO status badge
+  const trial = getTrialInfo();
+  const sub = getSubscriptionInfo();
+  const headerBadge = document.getElementById("trial-header-badge");
+  if(headerBadge) {
+    if (data.isPremium && sub.active) {
+      headerBadge.innerHTML = "👑 PRO Active";
+      headerBadge.style.background = "var(--acc-dim)";
+      headerBadge.style.borderColor = "var(--acc)";
+      headerBadge.style.color = "var(--acc-lt)";
+    } else if (trial.isTrial && !trial.isLocked) {
+      headerBadge.innerHTML = `🎁 Trial (${trial.daysLeft}d left)`;
+      headerBadge.style.background = "var(--acc-dim)";
+      headerBadge.style.borderColor = "var(--acc)";
+      headerBadge.style.color = "var(--acc-lt)";
+    } else {
+      headerBadge.innerHTML = "🔒 Expired";
+      headerBadge.style.background = "rgba(255,59,48,0.2)";
+      headerBadge.style.borderColor = "var(--danger)";
+      headerBadge.style.color = "var(--danger)";
+    }
+  }
+
+  // Time stats
+  const todayTimeMs = (data.history[todayKey()]||{}).timeMs||0;
+  document.getElementById("time-today").textContent = todayTimeMs>0 ? fmtTime(todayTimeMs) : "0s";
+  document.getElementById("time-total").textContent = fmtTime(data.totalTimeMs||0);
+
+  // Calories stats
+  document.getElementById("cal-today").textContent = fmtCalories(todayCalories());
+  document.getElementById("cal-total").textContent = fmtCalories(totalCalories());
+
+  // Ring
+  document.getElementById("ring").style.strokeDashoffset=String(CIRC*(1-frac));
+
+  const idle=sess.step===-1||!sess.active;
+  if(idle) {
+    const mainBtn = document.getElementById("main-btn");
+    const mainLbl = document.getElementById("main-label");
+
+    if(isGoalLocked) {
+      document.getElementById("r-mantra").textContent     = "🎉 Goal complete! 🔒";
+      document.getElementById("r-devanagari").textContent = "नमस्ते 🙏";
+      document.getElementById("r-meaning").textContent    = "Next goal: " + tomorrowG + " rounds (+4) 🔒 (Unlocks tonight at 12 AM)";
+      document.getElementById("r-pose").textContent       = "Target Achieved!";
+      document.getElementById("r-breath").textContent     = "Rest or Pranayama";
+      document.getElementById("r-breath").className       = "pose-breath inhale";
+      document.getElementById("r-pnum").textContent       = "Today: " + done + " / " + goal + " · Next: " + tomorrowG + " 🔒";
+
+      if(mainLbl) mainLbl.textContent = "🔒 Goal Complete";
+      if(mainBtn) {
+        mainBtn.style.background = "linear-gradient(135deg, rgba(245,158,11,0.15), rgba(15,23,42,0.8))";
+        mainBtn.style.border = "1.5px solid #F59E0B";
+        mainBtn.style.color = "#FBBF24";
+        mainBtn.style.cursor = "not-allowed";
+        mainBtn.style.opacity = "0.9";
+        mainBtn.style.boxShadow = "0 0 14px rgba(245,158,11,0.3)";
+      }
+    } else {
+      document.getElementById("r-mantra").textContent     = "☀️";
+      document.getElementById("r-devanagari").textContent = "";
+      document.getElementById("r-meaning").textContent    = "";
+      document.getElementById("r-pose").textContent       = "Ready";
+      document.getElementById("r-breath").textContent     = "Tap Start";
+      document.getElementById("r-breath").className       = "pose-breath";
+      document.getElementById("r-pnum").textContent       = "Goal "+done+" / "+goal;
+
+      if(mainLbl) mainLbl.textContent = "▶ Start";
+      if(mainBtn) {
+        mainBtn.style.background = "";
+        mainBtn.style.border = "";
+        mainBtn.style.color = "";
+        mainBtn.style.cursor = "pointer";
+        mainBtn.style.opacity = "1";
+        mainBtn.style.boxShadow = "";
+      }
+    }
+    document.getElementById("tbar-wrap").style.display  = "none";
+  } else {
+    const s=STEPS[sess.step];
+    document.getElementById("r-mantra").textContent     = s.mantra;
+    document.getElementById("r-devanagari").textContent = s.mantraD;
+    document.getElementById("r-meaning").textContent    = s.meaning;
+    document.getElementById("r-pose").textContent       = s.pose;
+    document.getElementById("r-breath").textContent     = s.breath;
+    document.getElementById("r-breath").className       = "pose-breath "+s.breathClass;
+    document.getElementById("r-pnum").textContent       =
+      "Set "+(done+1)+" of "+goal+" · Pose "+(sess.step+1)+"/12";
+  }
+
+  // Pace display — reflects active running phase seconds (e.g. 2.5s / 4.0s / 2.2s) when Auto Phase Speed is ON
+  const activePoseSec = typeof getPhasePoseSeconds === "function" ? getPhasePoseSeconds() : cfg.poseSeconds;
+  document.getElementById("spd-v").textContent = activePoseSec + "s / pose";
+
+  // Voice button
+  document.getElementById("voice-btn").classList.toggle("on",!voiceMuted);
+
+  // Dots visualizer — show dots up to today's goal (or tomorrow's goal if today is complete)
+  const dotsEl=document.getElementById("dots");
+  dotsEl.innerHTML="";
+
+  const displayGoal = isGoalLocked ? tomorrowG : goal;
+  const yesterBase  = Math.max(0, goal - (cfg.dailyIncrease || 4));
+  const MAX_DOTS    = 108;
+  const showUpTo    = Math.min(displayGoal, MAX_DOTS);
+
+  for(let i=1; i<=showUpTo; i++){
+    const dot=document.createElement("div");
+    const isDone     = i <= done;
+    const isLastDone = isDone && i === done;
+    const isActive   = i === done+1 && sess.active;
+    const isNewToday = i > yesterBase && i <= goal;
+    const isTomorrow = i > goal;
+
+    let cls = "dot";
+    if(isDone && isNewToday)  cls += " done new-today";
+    else if(isDone)           cls += " done";
+
+    if(isLastDone)            cls += " last-done";
+
+    if(isActive)              cls += " active";
+    else if(isTomorrow)       cls += " target locked";
+    else if(isNewToday)       cls += " target";
+
+    dot.className = cls;
+    dot.textContent = i;
+    if(isTomorrow) {
+      dot.title = "Next goal: " + tomorrowG + " (unlocks tonight at 12 AM Midnight)";
+    }
+    dotsEl.appendChild(dot);
+  }
+  if(displayGoal > MAX_DOTS){
+    const more=document.createElement("div");
+    more.style.cssText="font-size:10px;color:var(--muted);align-self:center;padding:4px";
+    more.textContent="+"+(displayGoal-MAX_DOTS)+" more";
+    dotsEl.appendChild(more);
+  }
+
+  syncChartUI();
+  renderBars();
+  updateDietPlanButtonLockUI();
+  checkSubscriptionReminder();
+}
+
+/* ── History chart — bar / line / dot ────────────────────────── */
+function renderBars() {
+  requestAnimationFrame(_drawChart);
+}
+
+function _drawChart() {
+  const wrap = document.getElementById("chart-wrap");
+  if(!wrap) return;
+  wrap.innerHTML = "";
+
+  const N    = cfg.chartDays || 7;
+  const mode = cfg.chartMode || "bar";
+  const tk   = todayKey();
+
+  // Build data oldest → newest
+  const pts = [];
+  for(let i = N-1; i >= 0; i--) {
+    const d   = dayKey(i);
+    const rec = data.history[d] || {};
+    const sets = typeof rec === "number" ? rec : (rec.sets || 0);
+    const goal = d === tk
+      ? todayGoal()
+      : (typeof rec === "number" ? 0 : (rec.goal || 0));
+    pts.push({ d, sets, goal, isToday: d === tk });
+  }
+
+  const maxVal = Math.max(1, ...pts.map(p => Math.max(p.sets, p.goal)));
+  const PW   = wrap.offsetWidth || 320;
+  const GAP  = N > 14 ? 2 : 3;
+  const colW = Math.max(10, Math.floor((PW - GAP * (N - 1)) / N));
+  const CH   = 80;   // bar height px
+  const LH   = 32;   // label area above bar (number + goal)
+  const DH   = 20;   // date label below bar
+  const TOT  = LH + CH + DH;
+
+  // Colors — Multi-Gradient Functional Scheme for Chart Bars & Lines
+  const barStyle = p => p.isToday
+    ? "background:linear-gradient(180deg,#FBBF24 0%,#F59E0B 100%);box-shadow:0 0 12px rgba(251,191,36,0.6);"
+    : (p.sets > 0
+        ? "background:linear-gradient(180deg,#60A5FA 0%,#3B82F6 100%);box-shadow:0 0 8px rgba(96,165,250,0.4);"
+        : "background:rgba(59,130,246,0.15);border:1px dashed rgba(96,165,250,0.2);");
+
+  const lblCol  = p => p.isToday ? "#FBBF24" : (p.sets > 0 ? "#60A5FA" : "#93C5FD");
+  const dateCol = p => p.isToday ? "#FBBF24" : "#93C5FD";
+
+  /* ── BAR ──────────────────────────────────────────────────── */
+  if(mode === "bar") {
+    const flex = document.createElement("div");
+    flex.style.cssText =
+      "display:flex;gap:"+GAP+"px;width:100%;height:"+TOT+"px;align-items:flex-end";
+
+    pts.forEach((p, idx) => {
+      const col = document.createElement("div");
+      col.style.cssText =
+        "flex:0 0 "+colW+"px;display:flex;flex-direction:column;" +
+        "align-items:center;height:"+TOT+"px";
+
+      /* label area ------------------------------------------ */
+      const la = document.createElement("div");
+      la.style.cssText =
+        "height:"+LH+"px;width:100%;display:flex;flex-direction:column;" +
+        "align-items:center;justify-content:flex-end;gap:1px;padding-bottom:3px";
+
+      if(p.sets > 0 || (p.isToday && p.goal > 0)) {
+        // top line: completed count
+        const t1 = document.createElement("div");
+        t1.style.cssText =
+          "font-size:"+(N>14?"8":"9")+"px;font-weight:800;color:"+lblCol(p)+
+          ";line-height:1;text-align:center;white-space:nowrap";
+        t1.textContent = p.sets > 0 ? String(p.sets) : "0";
+        la.appendChild(t1);
+
+        // bottom line: /goal
+        if(p.goal > 0) {
+          const t2 = document.createElement("div");
+          t2.style.cssText =
+            "font-size:7px;color:#93C5FD;line-height:1;text-align:center";
+          t2.textContent = "/"+p.goal;
+          la.appendChild(t2);
+        }
+      }
+      col.appendChild(la);
+
+      /* bar ------------------------------------------------- */
+      const barH = p.sets > 0
+        ? Math.max(6, Math.round((p.sets / maxVal) * CH))
+        : 3;
+      const bar = document.createElement("div");
+      bar.style.cssText =
+        "width:100%;height:"+barH+"px;flex-shrink:0;" +
+        "border-radius:3px 3px 2px 2px;"+barStyle(p)+"margin-top:auto";
+      col.appendChild(bar);
+
+      /* date label ------------------------------------------ */
+      const dt  = new Date(p.d + "T00:00:00");
+      const dl  = document.createElement("div");
+      const skip = N > 14 ? 3 : (N > 7 ? 2 : 1);
+      dl.style.cssText =
+        "font-size:"+(N>14?"7":"8")+"px;text-align:center;margin-top:4px;" +
+        "height:"+(DH-4)+"px;line-height:"+(DH-4)+"px;color:"+dateCol(p)+";font-weight:600";
+      if(idx % skip === 0 || p.isToday)
+        dl.textContent = dt.toLocaleDateString(undefined,{month:"numeric",day:"numeric"});
+      col.appendChild(dl);
+
+      flex.appendChild(col);
+    });
+    wrap.appendChild(flex);
+    return;
+  }
+
+  /* ── LINE (SVG) ───────────────────────────────────────────── */
+  const SW  = Math.max(PW, colW * N + GAP * (N - 1));
+  const SH  = LH + CH + DH;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("width",  SW);
+  svg.setAttribute("height", SH);
+  svg.style.cssText = "display:block;overflow:visible";
+
+  const xOf = i => Math.round(i * (colW + GAP) + colW / 2);
+  const yOf = v => Math.round(LH + CH - (v / maxVal) * (CH - 10) + 2);
+
+  // grid
+  [0.5, 1].forEach(f => {
+    const gy = yOf(maxVal * f);
+    const gl = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    gl.setAttribute("x1", 0); gl.setAttribute("x2", SW);
+    gl.setAttribute("y1", gy); gl.setAttribute("y2", gy);
+    gl.setAttribute("stroke", "rgba(96,165,250,0.2)"); gl.setAttribute("stroke-width", "1");
+    const gv = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    gv.setAttribute("x", 2); gv.setAttribute("y", gy - 3);
+    gv.setAttribute("fill", "#93C5FD"); gv.setAttribute("font-size", "7");
+    gv.textContent = Math.round(maxVal * f);
+    svg.appendChild(gv);
+  });
+
+  // line path — only through days with data
+  const lpts = pts
+    .map((p, i) => p.sets > 0 ? `${xOf(i)},${yOf(p.sets)}` : null)
+    .filter(Boolean);
+  if(lpts.length > 1) {
+    const pl = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    pl.setAttribute("points", lpts.join(" "));
+    pl.setAttribute("fill", "none");
+    pl.setAttribute("stroke", "#38BDF8");
+    pl.setAttribute("stroke-width", "2.5");
+    pl.setAttribute("stroke-linejoin", "round");
+    pl.setAttribute("stroke-linecap", "round");
+    pl.setAttribute("style", "filter:drop-shadow(0 0 6px rgba(56,189,248,0.7))");
+    svg.appendChild(pl);
+  }
+
+  // dots + labels
+  pts.forEach((p, i) => {
+    const cx = xOf(i);
+    const cy = p.sets > 0 ? yOf(p.sets) : yOf(0) + 2;
+
+    // dot
+    const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    c.setAttribute("cx", cx); c.setAttribute("cy", cy);
+    c.setAttribute("r",  p.isToday ? "5" : "3.5");
+    c.setAttribute("fill", p.isToday ? "#FBBF24" : (p.sets > 0 ? "#60A5FA" : "rgba(96,165,250,0.2)"));
+    svg.appendChild(c);
+
+    // value label above dot
+    if(p.sets > 0) {
+      const vt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      vt.setAttribute("x", cx); vt.setAttribute("y", cy - 8);
+      vt.setAttribute("text-anchor", "middle");
+      vt.setAttribute("fill", p.isToday ? "#FBBF24" : "#60A5FA");
+      vt.setAttribute("font-size", "8");
+      vt.setAttribute("font-weight", "700");
+      vt.textContent = p.sets + (p.goal > 0 ? "/"+p.goal : "");
+      svg.appendChild(vt);
+    }
+
+    // date label
+    const skip = N > 14 ? 3 : (N > 7 ? 2 : 1);
+    if(i % skip === 0 || p.isToday) {
+      const dt = new Date(p.d + "T00:00:00");
+      const dl = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      dl.setAttribute("x", cx); dl.setAttribute("y", LH + CH + DH - 2);
+      dl.setAttribute("text-anchor", "middle");
+      dl.setAttribute("fill", p.isToday ? "#FBBF24" : "#93C5FD");
+      dl.setAttribute("font-size", "8");
+      dl.textContent = dt.toLocaleDateString(undefined,{month:"numeric",day:"numeric"});
+      svg.appendChild(dl);
+    }
+  });
+
+  const sc = document.createElement("div");
+  sc.style.cssText = "overflow-x:auto;width:100%";
+  sc.appendChild(svg);
+  wrap.appendChild(sc);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   PRANAYAMA MODULE — Live Counting Engine (8 Practices)
+   Round 1: Full voice instructions
+   Round 2+: Action name + live second/stroke counts
+═══════════════════════════════════════════════════════════════ */
+
+const PRANAYAMA_BASE = [
+  {
+    id: "dirgha",
+    name: "Dirgha Pranayama", nameHi: "दीर्घ प्राणायाम", nameMr: "दीर्घ प्राणायाम",
+    totalRounds: 6, secPerRound: 16,
+    desc: "Three-part deep belly breathing — prepares body & mind",
+    descHi: "तीन भागों में गहरी श्वसन — शरीर और मन को तैयार करता है",
+    descMr: "तीन भागांत खोल श्वसन — शरीर आणि मन तयार करते",
+    steps: [
+      { en: "Sit comfortably with spine erect. Close your eyes and relax.",
+        hi: "सीधे बैठें, रीढ़ सीधी रखें। आँखें बंद करें।",
+        mr: "सरळ बसा, मणका ताठ ठेवा। डोळे बंद करा.", dur: 6, action: "setup" },
+      { en: "Inhale slowly through both nostrils for 4 counts. Fill belly, ribs, then chest.",
+        hi: "4 गिनती तक धीरे श्वास लें। पेट, पसलियाँ, फिर छाती भरें।",
+        mr: "4 मोजेपर्यंत हळू श्वास घ्या.", dur: 4, action: "inhale", count: 4, label: "🫁 Inhale" },
+      { en: "Hold gently for 4 counts.",
+        hi: "4 गिनती तक आराम से रोकें।",
+        mr: "4 मोजेपर्यंत हळूच थांबा.", dur: 4, action: "hold", count: 4, label: "⏸ Hold" },
+      { en: "Exhale slowly for 8 counts. Chest, ribs, then belly falls.",
+        hi: "8 गिनती तक धीरे श्वास छोड़ें।",
+        mr: "8 मोजेपर्यंत हळू श्वास सोडा.", dur: 8, action: "exhale", count: 8, label: "🌬 Exhale" }
+    ]
+  },
+  {
+    id: "kapalabhati",
+    name: "Kapalabhati", nameHi: "कपालभाती", nameMr: "कपालभाती",
+    totalRounds: 5, secPerRound: 48,
+    desc: "Skull-shining breath — 36 forceful exhales per round",
+    descHi: "कपालभाती — प्रति राउंड 36 तेज़ श्वास छोड़ना",
+    descMr: "कपालभाती — प्रति फेरी 36 जोरदार श्वास सोडणे",
+    steps: [
+      { en: "Sit tall with spine erect. Take one deep breath to prepare.",
+        hi: "सीधे बैठें। एक गहरी साँस लें।",
+        mr: "सरळ बसा. एक खोल श्वास घ्या.", dur: 6, action: "setup" },
+      { en: "Begin 36 sharp forceful exhales through nose at 1 stroke per second. Pull navel in.",
+        hi: "शुरू करें 36 तेज़ श्वास छोड़ना। नाभि अंदर खींचें।",
+        mr: "३६ जोरात श्वास सोडणे सुरू करा.", dur: 36, action: "stroke", count: 36, label: "💥 Stroke" },
+      { en: "Deep inhale, hold briefly, then exhale completely. Rest and breathe normally.",
+        hi: "गहरी साँस लें, रोकें, फिर छोड़ें। सामान्य साँस लें।",
+        mr: "खोल श्वास घ्या, थांबा, मग सोडा. सामान्य श्वास घ्या.", dur: 12, action: "rest", count: 12, label: "🧘 Rest" }
+    ]
+  },
+  {
+    id: "bhastrika",
+    name: "Bhastrika", nameHi: "भस्त्रिका", nameMr: "भस्त्रिका",
+    totalRounds: 4, secPerRound: 45,
+    desc: "Bellows breath — 24 equal forceful inhales & exhales",
+    descHi: "भस्त्रिका — 24 समान बलपूर्वक श्वास लेना और छोड़ना",
+    descMr: "भस्त्रिका — २४ समान जोराने श्वास घेणे आणि सोडणे",
+    steps: [
+      { en: "Take a normal breath. Forceful inhale AND forceful exhale equally through nose.",
+        hi: "सामान्य साँस लें। नाक से जोरदार श्वास लें और छोड़ें।",
+        mr: "सामान्य श्वास घ्या. नाकातून जोरात श्वास घ्या आणि सोडा.", dur: 6, action: "setup" },
+      { en: "Pump vigorously at 1 breath per second. 24 breaths total.",
+        hi: "जोरदार श्वास लें और छोड़ें। 24 बार।",
+        mr: "जोराने श्वास घ्या आणि सोडा. २४ वेळा.", dur: 24, action: "stroke", count: 24, label: "💥 Bhastrika" },
+      { en: "Deep inhale, hold for 5 counts, then exhale fully. Rest.",
+        hi: "गहरी साँस लें, 5 गिनती रोकें, फिर छोड़ें। आराम।",
+        mr: "खोल श्वास घ्या, 5 मोजे थांबा, मग सोडा. आराम.", dur: 15, action: "hold_rest", count: 5, label: "⏸ Hold & Rest" }
+    ]
+  },
+  {
+    id: "anulom",
+    name: "Anulom Vilom", nameHi: "अनुलोम विलोम", nameMr: "अनुलोम विलोम",
+    totalRounds: 15, secPerRound: 24,
+    desc: "Alternate nostril breathing — balances energy channels",
+    descHi: "अनुलोम विलोम — ऊर्जा नाड़ियों को संतुलित करता है",
+    descMr: "अनुलोम विलोम — ऊर्जा नाड्या संतुलित करते",
+    steps: [
+      { en: "Right hand in Nasagra mudra. Thumb closes right nostril.",
+        hi: "दाहिना हाथ नासाग्र मुद्रा में। अंगूठे से दाहिनी नासिका बंद।",
+        mr: "उजवा हात नासाग्र मुद्रेत. उजवी नाकपुडी बंद.", dur: 4, action: "setup", round1Only: true },
+      { en: "Inhale through LEFT nostril for 4 counts.",
+        hi: "बाईं से 4 गिनती में श्वास लें।",
+        mr: "डाव्याकडून 4 मोजेपर्यंत श्वास घ्या.", dur: 4, action: "inhale", count: 4, label: "👈 Inhale Left" },
+      { en: "Exhale through RIGHT nostril for 8 counts.",
+        hi: "दाहिनी से 8 गिनती में छोड़ें।",
+        mr: "उजवीकडून 8 मोजेपर्यंत सोडा.", dur: 8, action: "exhale", count: 8, label: "👉 Exhale Right" },
+      { en: "Inhale through RIGHT nostril for 4 counts.",
+        hi: "दाहिनी से 4 गिनती में लें।",
+        mr: "उजवीकडून 4 मोजेपर्यंत घ्या.", dur: 4, action: "inhale", count: 4, label: "👉 Inhale Right" },
+      { en: "Exhale through LEFT nostril for 8 counts.",
+        hi: "बाईं से 8 गिनती में छोड़ें।",
+        mr: "डाव्याकडून 8 मोजेपर्यंत सोडा.", dur: 8, action: "exhale", count: 8, label: "👈 Exhale Left" }
+    ]
+  },
+  {
+    id: "nadi",
+    name: "Nadi Shodhana", nameHi: "नाडी शोधन", nameMr: "नाडी शोधन",
+    totalRounds: 5, secPerRound: 60,
+    desc: "Channel purification — deep 1:4:2 ratio (4in, 16hold, 8out)",
+    descHi: "नाडी शोधन — गहरा 1:4:2 अनुपात (4 श्वास, 16 रोकें, 8 छोड़ें)",
+    descMr: "नाडी शोधन — खोल 1:4:2 प्रमाण (4 श्वास, 16 थांबा, 8 सोडा)",
+    steps: [
+      { en: "Inhale through LEFT nostril for 4 counts.",
+        hi: "बाईं से 4 गिनती में श्वास लें।",
+        mr: "डाव्याकडून 4 मोजेपर्यंत श्वास घ्या.", dur: 4, action: "inhale", count: 4, label: "👈 Inhale Left" },
+      { en: "Retain breath, both nostrils closed. Hold for 16 counts.",
+        hi: "श्वास रोकें। 16 गिनती तक।",
+        mr: "श्वास थांबवा. 16 मोजेपर्यंत.", dur: 16, action: "hold", count: 16, label: "⏸ Retain (Kumbhaka)" },
+      { en: "Exhale through RIGHT nostril for 8 counts.",
+        hi: "दाहिनी से 8 गिनती में पूरी श्वास छोड़ें।",
+        mr: "उजवीकडून 8 मोजेपर्यंत श्वास सोडा.", dur: 8, action: "exhale", count: 8, label: "👉 Exhale Right" },
+      { en: "Inhale through RIGHT nostril for 4 counts.",
+        hi: "दाहिनी से 4 गिनती में लें।",
+        mr: "उजवीकडून 4 मोजेपर्यंत घ्या.", dur: 4, action: "inhale", count: 4, label: "👉 Inhale Right" },
+      { en: "Retain breath, both closed. Hold for 16 counts.",
+        hi: "श्वास रोकें। 16 गिनती।",
+        mr: "श्वास थांबवा. 16 मोजे।", dur: 16, action: "hold", count: 16, label: "⏸ Retain (Kumbhaka)" },
+      { en: "Exhale through LEFT nostril for 8 counts.",
+        hi: "बाईं से 8 गिनती में छोड़ें।",
+        mr: "डाव्याकडून 8 मोजेपर्यंत सोडा.", dur: 8, action: "exhale", count: 8, label: "👈 Exhale Left" },
+      { en: "Rest and take a natural breath.",
+        hi: "विराम लें और सामान्य श्वास लें।",
+        mr: "विराम घ्या आणि सामान्य श्वास घ्या.", dur: 4, action: "rest", count: 4, label: "🧘 Rest" }
+    ]
+  },
+  {
+    id: "ujjayi",
+    name: "Ujjayi Pranayama", nameHi: "उज्जायी प्राणायाम", nameMr: "उज्जायी प्राणायाम",
+    totalRounds: 6, secPerRound: 15,
+    desc: "Ocean breath — throat constriction with audible whisper",
+    descHi: "उज्जायी — गले से समुद्र की ध्वनि",
+    descMr: "उज्जायी — घशातून समुद्राचा आवाज",
+    steps: [
+      { en: "Inhale through nose for 5 counts with ocean throat sound.",
+        hi: "5 गिनती तक नाक से श्वास लें — समुद्र ध्वनि।",
+        mr: "5 मोजेपर्यंत नाकाने श्वास घ्या — समुद्राचा आवाज.", dur: 5, action: "inhale", count: 5, label: "🌊 Ujjayi Inhale" },
+      { en: "Hold gently for 2 counts.",
+        hi: "2 गिनती रोकें।",
+        mr: "2 मोजे थांबा.", dur: 2, action: "hold", count: 2, label: "⏸ Hold" },
+      { en: "Exhale slowly through nose for 8 counts with throat sound.",
+        hi: "8 गिनती तक धीरे छोड़ें।",
+        mr: "8 मोजेपर्यंत हळू सोडा.", dur: 8, action: "exhale", count: 8, label: "🌊 Ujjayi Exhale" }
+    ]
+  },
+  {
+    id: "bhramari",
+    name: "Bhramari", nameHi: "भ्रामरी", nameMr: "भ्रामरी",
+    totalRounds: 10, secPerRound: 16,
+    desc: "Humming bee breath — calms brain & nervous system",
+    descHi: "भ्रामरी — मधुमक्खी की गुनगुनाहट (10 राउंड)",
+    descMr: "भ्रामरी — मधमाशीचा गुणगुणाट (10 फेऱ्या)",
+    steps: [
+      { en: "Close ears with thumbs, fingers on closed eyes (Shanmukhi mudra).",
+        hi: "अंगूठों से कान बंद करें। षण्मुखी मुद्रा।",
+        mr: "अंगठ्यांनी कान बंद करा. षण्मुखी मुद्रा.", dur: 5, action: "setup", round1Only: true },
+      { en: "Deep inhale through nose for 5 counts.",
+        hi: "5 गिनती तक गहरी साँस लें।",
+        mr: "5 मोजेपर्यंत खोल श्वास घ्या.", dur: 5, action: "inhale", count: 5, label: "🫁 Deep Inhale" },
+      { en: "Exhale with continuous humming sound. Mmmmm. Feel skull vibrations.",
+        hi: "छोड़ते हुए लगातार गुनगुनाएं। म्म्म्म।",
+        mr: "सोडताना सतत गुणगुणाट करा. म्म्म्म.", dur: 11, action: "humming", count: 11, label: "🐝 Humming Exhale" }
+    ]
+  },
+  {
+    id: "meditation",
+    name: "Meditation", nameHi: "ध्यान", nameMr: "ध्यान",
+    totalRounds: 1, secPerRound: 540,
+    desc: "Silent awareness — 9 minutes peaceful meditation",
+    descHi: "मौन ध्यान — 9 मिनट शांति",
+    descMr: "शांत ध्यान — ९ मिनिटे शांतता",
+    steps: [
+      { en: "Release all techniques. Hands on knees, palms facing up. Gently close your eyes.",
+        hi: "सभी तकनीकें छोड़ दें। हाथ घुटनों पर। आँखें बंद करें।",
+        mr: "सर्व तंत्रे सोडा. हात गुडघ्यांवर. डोळे बंद करा.", dur: 10, action: "setup" },
+      { en: "Observe your natural breath flow. Rest in pure awareness.",
+        hi: "प्राकृतिक श्वास को देखें। शांत रहें।",
+        mr: "नैसर्गिक श्वास पाहा. शांत राहा.", dur: 530, action: "meditate", count: 530, label: "🧘 Silent Awareness" }
+    ]
+  }
+];
+
+// Runtime state
+let pranaState = {
+  active      : false,
+  paused      : false,
+  phaseIdx    : 0,
+  stepIdx     : 0,
+  roundNum    : 1,
+  phaseStart  : 0,
+  totalStart  : 0,
+  stepTimer   : null,
+  countTimer  : null,
+  clockTimer  : null,
+  pauseAccMs  : 0,
+  pauseAt     : 0,
+};
+
+function pranaSessionMs() {
+  return PRANAYAMA_BASE.reduce((s, p) => s + p.totalRounds * p.secPerRound * 1000, 0);
+}
+
+function showPranayama() {
+  pranaState.phaseIdx   = 0;
+  pranaState.stepIdx    = 0;
+  pranaState.roundNum   = 1;
+  pranaState.active     = true;
+  pranaState.paused     = false;
+  pranaState.totalStart = Date.now();
+  pranaState.pauseAccMs = 0;
+  pranaState.pauseAt    = 0;
+  const ov = document.getElementById("prana-ov");
+  ov.classList.add("show");
+  ov.scrollTop = 0;
+  updatePranaTimeCards();
+  acquireWakeLock();
+  startPranaPhase();
+}
+
+function makePranaUtt(text) {
+  const lang = cfg.pranaLang || "en";
+  const u = new SpeechSynthesisUtterance(text);
+  const vList = speechSynthesis.getVoices();
+
+  if(lang === "hi") {
+    u.lang = "hi-IN"; u.rate = 1.05; u.pitch = 1.0;
+    const hv = vList.find(v=>v.lang==="hi-IN"&&v.localService) ||
+               vList.find(v=>v.lang==="hi-IN") ||
+               vList.find(v=>v.lang.startsWith("hi")) || null;
+    if(hv) u.voice = hv;
+  } else if(lang === "mr") {
+    u.lang = "hi-IN"; u.rate = 1.05; u.pitch = 1.0;
+    const hv = vList.find(v=>v.lang==="hi-IN") || null;
+    if(hv) u.voice = hv;
+  } else {
+    u.lang = "en-IN"; u.rate = 1.05; u.pitch = 1.05;
+    const ev = vList.find(v=>v.lang==="en-IN") || vList.find(v=>v.lang.startsWith("en")) || null;
+    if(ev) u.voice = ev;
+  }
+  return u;
+}
+
+function speakPranaInstruction(textOrObj, onDoneCallback) {
+  if(voiceMuted || !window.speechSynthesis) {
+    if(onDoneCallback) setTimeout(onDoneCallback, 50);
+    return;
+  }
+  const text = typeof textOrObj === "string" ? textOrObj : getPranaText(textOrObj);
+  if(!text) {
+    if(onDoneCallback) setTimeout(onDoneCallback, 50);
+    return;
+  }
+
+  qClear();
+  const u = makePranaUtt(text);
+  u.rate = 0.95;
+
+  let called = false;
+  let safetyTimer = null;
+  const finish = () => {
+    if(!called) {
+      called = true;
+      if(safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null; }
+      if(onDoneCallback) setTimeout(onDoneCallback, 300);
+    }
+  };
+
+  u.onend = finish;
+  u.onerror = finish;
+
+  const safeTimeoutMs = Math.max(6000, text.length * 160);
+  safetyTimer = setTimeout(finish, safeTimeoutMs);
+
+  qSpeak(u);
+}
+
+function speakPranaCount(text) {
+  if (voiceMuted || !window.speechSynthesis || typeof SpeechSynthesisUtterance === "undefined") return;
+  const lang = cfg.pranaLang || "en";
+
+  try {
+    if (window.speechSynthesis.paused) {
+      try { window.speechSynthesis.resume(); } catch(e){}
+    }
+
+    const u = new SpeechSynthesisUtterance(text);
+    const vList = window.speechSynthesis.getVoices ? window.speechSynthesis.getVoices() : [];
+
+    // Rate 1.40x ensures count words finish in ~200ms without queue backup
+    u.rate = 1.40;
+
+    if (lang === "hi") {
+      u.lang = "hi-IN"; u.pitch = 1.0;
+      const hv = vList.find(v => v.lang === "hi-IN" && v.localService) ||
+                 vList.find(v => v.lang === "hi-IN") ||
+                 vList.find(v => v.lang.startsWith("hi")) || null;
+      if (hv) u.voice = hv;
+    } else if (lang === "mr") {
+      u.lang = "hi-IN"; u.pitch = 1.0;
+      const hv = vList.find(v => v.lang === "hi-IN") || null;
+      if (hv) u.voice = hv;
+    } else {
+      u.lang = "en-IN"; u.pitch = 1.05;
+      const ev = vList.find(v => v.lang === "en-IN") || vList.find(v => v.lang.startsWith("en")) || null;
+      if (ev) u.voice = ev;
+    }
+
+    window.speechSynthesis.speak(u);
+  } catch (e) {
+    console.warn("Pranayama count speech error:", e);
+  }
+}
+
+function startPranaPhase() {
+  const phase = PRANAYAMA_BASE[pranaState.phaseIdx];
+  pranaState.phaseStart = Date.now();
+  pranaState.stepIdx    = 0;
+  pranaState.roundNum   = 1;
+
+  updatePranaGuideLockButton(false); // Unlock guide button at start of each Pranayama type
+
+  document.getElementById("prana-title").textContent  = phase.name;
+  document.getElementById("prana-title-hi").textContent = phase.nameHi;
+  document.getElementById("prana-desc").textContent   =
+    phase.desc + " (" + phase.totalRounds + (phase.totalRounds === 1 ? " session" : " rounds") + ")";
+  document.getElementById("prana-phase-num").textContent =
+    "Practice " + (pranaState.phaseIdx+1) + " of " + PRANAYAMA_BASE.length;
+  document.getElementById("prana-phase-bar").style.width = "0%";
+
+  startPranaClocks();
+
+  const lang = cfg.pranaLang || "en";
+  const nameStr = (lang==="hi" ? phase.nameHi : lang==="mr" ? (phase.nameMr||phase.nameHi) : phase.name) || phase.name;
+  const numWord = getLanguageNumber(1, lang);
+
+  const phaseIntro = phase.totalRounds > 1
+    ? (lang === "hi" ? (nameStr + "। राउंड " + numWord + "।") :
+       lang === "mr" ? (nameStr + "। फेरी " + numWord + "।") :
+       (nameStr + ". Round 1."))
+    : (lang === "hi" ? (nameStr + "।") :
+       lang === "mr" ? (nameStr + "।") :
+       (nameStr + "."));
+
+  speakPranaInstruction(phaseIntro, () => {
+    if(!pranaState.active || pranaState.paused) return;
+    startPranaStep();
+  });
+}
+
+function startPranaStep() {
+  if(!pranaState.active || pranaState.paused) return;
+  clearPranaTimers();
+  qClear();
+  try { if(window.speechSynthesis) window.speechSynthesis.cancel(); } catch(e){}
+
+  const phase   = PRANAYAMA_BASE[pranaState.phaseIdx];
+  const steps   = phase.steps;
+  const stepIdx = pranaState.stepIdx;
+  const step    = steps[stepIdx];
+
+  // Skip round1Only setup steps in round 2+
+  if(step.round1Only && pranaState.roundNum > 1) {
+    pranaState.stepIdx++;
+    if(pranaState.stepIdx >= steps.length) {
+      advancePranaRound();
+    } else {
+      startPranaStep();
+    }
+    return;
+  }
+
+  // Update header badge
+  const roundLbl = phase.totalRounds > 1
+    ? "Round " + pranaState.roundNum + " / " + phase.totalRounds + " — Step " + (stepIdx+1) + " / " + steps.length
+    : "Step " + (stepIdx+1) + " / " + steps.length;
+  document.getElementById("prana-step-num").textContent = roundLbl;
+
+  const isRound1 = pranaState.roundNum === 1;
+  const textFull = getPranaText(step);
+  const stepCardEl = document.getElementById("prana-step");
+
+  if(step.action === "setup" || (step.round1Only && isRound1 && !step.count)) {
+    updatePranaGuideLockButton(false); // Unlocked during setup
+    stepCardEl.innerHTML =
+      '<div class="prana-txt-full">' + textFull + '</div>' +
+      '<div class="prana-count-badge" id="prana-live-badge">⏱ ' + (step.dur || 4) + 's remaining</div>';
+
+    // Speak setup instruction cleanly. Once completed, proceed to execution!
+    speakPranaInstruction(textFull, () => {
+      if(!pranaState.active || pranaState.paused) return;
+      startStepExecution(step, isRound1);
+    });
+  } else {
+    // Action Step: Render Action Card UI & count every number out loud for ALL rounds (including Round 1!)
+    const actionLabel = step.label || getActionSpeech(step);
+    stepCardEl.innerHTML =
+      '<div class="prana-count-card">' +
+        '<div class="prana-count-action">' + actionLabel + '</div>' +
+        '<div class="prana-count-num" id="prana-live-num">1 / ' + (step.count || step.dur || 1) + '</div>' +
+      '</div>';
+
+    startStepExecution(step, isRound1);
+  }
+}
+
+function startStepExecution(step, isRound1) {
+  if(!pranaState.active || pranaState.paused) return;
+  clearPranaTimers();
+
+  const maxCount = step.count || step.dur || 4;
+
+  // Case A: Step with live number counting (Inhale, Hold, Exhale, Stroke, Humming)
+  if(step.count && step.count > 0) {
+    updatePranaGuideLockButton(true); // Lock guide button during running live rounds
+    let curSec = 1;
+    updateLiveCountUI(step, curSec, maxCount);
+    speakLiveStepCount(step, curSec, isRound1);
+
+    pranaState.countTimer = setInterval(() => {
+      if(!pranaState.active || pranaState.paused) return;
+      curSec++;
+
+      if(curSec > maxCount) {
+        clearPranaTimers();
+        advancePranaStep();
+        return;
+      }
+
+      updateLiveCountUI(step, curSec, maxCount);
+      speakLiveStepCount(step, curSec, isRound1);
+    }, 1000);
+    return;
+  }
+
+  // Case B: Setup / Rest / Meditation steps (duration countdown)
+  let durLeft = step.dur || 4;
+  updateSetupDurationUI(step, durLeft);
+  speakLiveStepCount(step, 1, isRound1);
+
+  pranaState.countTimer = setInterval(() => {
+    if(!pranaState.active || pranaState.paused) return;
+    durLeft--;
+
+    if(durLeft <= 0) {
+      clearPranaTimers();
+      advancePranaStep();
+      return;
+    }
+
+    updateSetupDurationUI(step, durLeft);
+  }, 1000);
+}
+
+function updateSetupDurationUI(step, durLeft) {
+  const badgeEl = document.getElementById("prana-live-badge");
+  if(badgeEl) badgeEl.textContent = "⏱ " + durLeft + "s remaining";
+}
+
+function updateLiveCountUI(step, curSec, maxSec) {
+  const badgeEl = document.getElementById("prana-live-badge");
+  const numEl   = document.getElementById("prana-live-num");
+
+  const icon = step.action === "stroke" ? "💥" :
+               step.action === "inhale" ? "🫁" :
+               step.action === "hold" || step.action === "hold_rest" ? "⏸" :
+               step.action === "exhale" ? "🌬" :
+               step.action === "humming" ? "🐝" : "⏱";
+
+  if(badgeEl) badgeEl.textContent = icon + " " + (step.label || 'Count') + " " + curSec + " / " + maxSec;
+  if(numEl)   numEl.textContent   = curSec + " / " + maxSec;
+}
+
+function getLanguageNumber(num, lang) {
+  const numStr = num.toString();
+  if(lang === "hi") {
+    const hiNums = ["", "एक", "दो", "तीन", "चार", "पाँच", "छह", "सात", "आठ", "नौ", "दस",
+                    "ग्यारह", "बारह", "तेरह", "चौदह", "पंद्रह", "सोलह", "सत्रह", "अठारह", "उन्नीस", "बीस",
+                    "इक्कीस", "बाईस", "तेईस", "चौबीस", "पच्चीस", "छब्बीस", "सत्तावीस", "अट्ठाईस", "उनतीस", "तीस",
+                    "इकतीस", "बत्तीस", "तेन्तीस", "चौंतीस", "पैंतीस", "छत्तीस", "सैंतीस", "अड़तीस", "उनतालीस", "चालिस",
+                    "इकतालीस", "बयालीस", "सैंतालीस", "चवालीस", "पैंतालीस", "छियालीस", "सैंतालीस", "अड़तालीस", "उंचास", "पचास",
+                    "इक्कावन", "बावन", "तिरपन", "चौवन", "पचपन", "छप्पन", "सत्तावन", "अत्तावन", "उनसठ", "साठ"];
+    return hiNums[num] || numStr;
+  }
+  if(lang === "mr") {
+    const mrNums = ["", "एक", "दोन", "तीन", "चार", "पाच", "सहा", "सात", "आठ", "नऊ", "दहा",
+                    "अकरा", "बारा", "तेरा", "चौदा", "पंधरा", "सोळा", "सतरा", "अठरा", "एकोणीस", "वीस",
+                    "एकवीस", "बावीस", "तेवीस", "चौवीस", "पंचवीस", "सव्वीस", "सत्तावीस", "अठ्ठावीस", "एकोणतीस", "तीस",
+                    "एकतीस", "बत्तीस", "तेहेतीस", "चौतीस", "पस्तीस", "छत्तीस", "सदतीस", "अडतीस", "एकोणचाळीस", "चाळीस",
+                    "एकचाळीस", "बेचाळीस", "त्रेचाळीस", "चव्वेचाळीस", "पंचचाळीस", "शहाचाळीस", "सत्तेचाळीस", "अठ्ठाचाळीस", "एकोणपन्नास", "पन्नास",
+                    "एकपन्नास", "बावन्न", "त्रेपन्न", "चौपन्न", "पन्नस", "छप्पन्न", "सत्तावन्न", "अठ्ठावन्न", "एकोणसाठ", "साठ"];
+    return mrNums[num] || numStr;
+  }
+  return numStr;
+}
+
+function speakLiveStepCount(step, curSec, isRound1) {
+  const lang = cfg.pranaLang || "en";
+  const numWord = getLanguageNumber(curSec, lang);
+  const maxSec = step.count || step.dur || 1;
+
+  if(step.action === "stroke") {
+    speakPranaCount(numWord);
+    return;
+  }
+  if(step.action === "inhale" || step.action === "hold" || step.action === "exhale") {
+    if(curSec === 1) {
+      const actWord = getActionSpeech(step);
+      speakPranaCount(actWord + " " + numWord);
+    } else {
+      speakPranaCount(numWord);
+    }
+    return;
+  }
+  if(step.action === "rest" || step.action === "hold_rest") {
+    if(curSec === 1) {
+      const restNum = getLanguageNumber(maxSec, lang);
+      const restMsg = lang === "hi" ? ("विश्राम " + restNum + " सेकंड") :
+                      lang === "mr" ? ("विश्रांती " + restNum + " सेकंद") :
+                      ("Rest " + maxSec + " seconds");
+      speakPranaCount(restMsg);
+    } else {
+      speakPranaCount(numWord);
+    }
+    return;
+  }
+  if(step.action === "humming") {
+    if(curSec === 1) {
+      speakPranaCount((lang === "hi" ? "गुनगुनाएं " : lang === "mr" ? "गुणगुणाट " : "Humming ") + numWord);
+    } else {
+      speakPranaCount(numWord);
+    }
+  }
+}
+
+function getActionSpeech(step) {
+  const lang = cfg.pranaLang || "en";
+  const label = step.label || "";
+
+  if(label.includes("Left")) {
+    if(step.action === "inhale") return lang === "hi" ? "बाईं श्वास" : lang === "mr" ? "डावी श्वास" : "Inhale Left";
+    if(step.action === "exhale") return lang === "hi" ? "बाईं छोड़ें" : lang === "mr" ? "डावी सोडा" : "Exhale Left";
+  }
+  if(label.includes("Right")) {
+    if(step.action === "inhale") return lang === "hi" ? "दाहिनी श्वास" : lang === "mr" ? "उजवी श्वास" : "Inhale Right";
+    if(step.action === "exhale") return lang === "hi" ? "दाहिनी छोड़ें" : lang === "mr" ? "उजवी सोडा" : "Exhale Right";
+  }
+
+  if(step.action === "inhale") {
+    return lang === "hi" ? "श्वास" : lang === "mr" ? "श्वास" : "Inhale";
+  }
+  if(step.action === "hold" || step.action === "hold_rest") {
+    return lang === "hi" ? "रोकें" : lang === "mr" ? "थांबा" : "Hold";
+  }
+  if(step.action === "exhale") {
+    return lang === "hi" ? "छोड़ें" : lang === "mr" ? "सोडा" : "Exhale";
+  }
+  if(step.action === "stroke") {
+    return label || "Strokes";
+  }
+  return label || "Begin";
+}
+
+function advancePranaStep() {
+  clearPranaTimers();
+  const phase = PRANAYAMA_BASE[pranaState.phaseIdx];
+  pranaState.stepIdx++;
+
+  if(pranaState.stepIdx >= phase.steps.length) {
+    advancePranaRound();
+  } else {
+    startPranaStep();
+  }
+}
+
+function advancePranaRound() {
+  const phase = PRANAYAMA_BASE[pranaState.phaseIdx];
+  if(pranaState.roundNum >= phase.totalRounds) {
+    nextPranaPhase();
+  } else {
+    pranaState.roundNum++;
+    pranaState.stepIdx = 0;
+    qClear();
+    try { if(window.speechSynthesis) window.speechSynthesis.cancel(); } catch(e){}
+    updatePranaGuideLockButton(false); // Unlocked before round transition
+    if(!pranaState.active || pranaState.paused) return;
+    startPranaStep();
+  }
+}
+
+
+
+function pranaElapsedPhaseMs() {
+  return Date.now() - pranaState.phaseStart - pranaState.pauseAccMs;
+}
+
+function pranaElapsedTotalMs() {
+  return Date.now() - pranaState.totalStart - pranaState.pauseAccMs;
+}
+
+function startPranaClocks() {
+  clearInterval(pranaState.clockTimer);
+  pranaState.clockTimer = setInterval(() => {
+    if(!pranaState.active || pranaState.paused) return;
+    const phase     = PRANAYAMA_BASE[pranaState.phaseIdx];
+    const phaseMs   = phase.totalRounds * phase.secPerRound * 1000;
+    const phaseEl   = pranaElapsedPhaseMs();
+    const phaseFrac = Math.min(1, phaseEl / phaseMs);
+    const totalMs   = pranaSessionMs();
+    const totalEl   = pranaElapsedTotalMs();
+    const totalFrac = Math.min(1, totalEl / totalMs);
+    const remSec    = Math.max(0, Math.round((totalMs - totalEl) / 1000));
+
+    document.getElementById("prana-phase-bar").style.width = (phaseFrac*100)+"%";
+    document.getElementById("prana-total-bar").style.width = (totalFrac*100)+"%";
+    document.getElementById("prana-time-rem").textContent  =
+      "Total remaining: " + fmtTime(remSec * 1000);
+    updatePranaTimeCards();
+  }, 500);
+}
+
+function nextPranaPhase() {
+  clearPranaTimers();
+  qClear();
+  try { if(window.speechSynthesis) window.speechSynthesis.cancel(); } catch(e){}
+  pranaState.phaseIdx++;
+  if(pranaState.phaseIdx >= PRANAYAMA_BASE.length) {
+    endPranayama(); return;
+  }
+  startPranaPhase();
+}
+
+function endPranayama() {
+  clearPranaTimers();
+  const elapsedMs = pranaElapsedTotalMs();
+  pranaState.active = false;
+  // Note: releaseWakeLock() will be called when user closes the Pranayama view so screen stays on till end
+
+  const today = todayKey();
+  if(!data.history[today]) data.history[today] = { sets:0, timeMs:0, goal:0 };
+  data.history[today].pranaMs = (data.history[today].pranaMs || 0) + elapsedMs;
+  data.totalPranaMs = (data.totalPranaMs || 0) + elapsedMs;
+  data.pranaFinishedToday = true;
+  saveAll();
+  updateDietPlanButtonLockUI();
+
+  speakPranaInstruction("Pranayama complete. Sit quietly. Namaste. Om Shanti.");
+  document.getElementById("prana-step").innerHTML       = '<div class="prana-txt-full">🙏 Practice complete. Namaste.</div>';
+  document.getElementById("prana-title").textContent   = "ध्यान";
+  document.getElementById("prana-phase-bar").style.width = "100%";
+  document.getElementById("prana-total-bar").style.width = "100%";
+  document.getElementById("prana-time-rem").textContent  = "Complete!";
+  document.getElementById("prana-close-btn").textContent = "✕ Close";
+  updatePranaTimeCards();
+
+  if (cfg.autoShowDietPostGoal !== false) {
+    setTimeout(() => showDietModal(), 2000);
+  }
+}
+
+function updatePranaTimeCards() {
+  const today = todayKey();
+  const todayPranaMs = (data.history[today]?.pranaMs || 0) +
+    (pranaState.active ? pranaElapsedTotalMs() : 0);
+  const totalPranaMs = (data.totalPranaMs || 0) +
+    (pranaState.active ? pranaElapsedTotalMs() : 0);
+  const ptEl = document.getElementById("prana-time-today");
+  const ttEl = document.getElementById("prana-time-total");
+  if(ptEl) ptEl.textContent = todayPranaMs > 0 ? fmtTime(todayPranaMs) : "0s";
+  if(ttEl) ttEl.textContent = totalPranaMs > 0 ? fmtTime(totalPranaMs) : "0s";
+}
+
+function clearPranaTimers() {
+  if(pranaState.stepTimer) {
+    clearTimeout(pranaState.stepTimer);
+    pranaState.stepTimer = null;
+  }
+  if(pranaState.countTimer) {
+    clearInterval(pranaState.countTimer);
+    pranaState.countTimer = null;
+  }
+  clearInterval(pranaState.clockTimer);
+}
+
+function pauseResumePrana() {
+  if(!pranaState.active) return;
+  pranaState.paused = !pranaState.paused;
+  const btn = document.getElementById("prana-pause-btn");
+  if(pranaState.paused) {
+    pranaState.pauseAt = Date.now();
+    clearPranaTimers();
+    try { window.speechSynthesis.cancel(); } catch(e){}
+    btn.textContent = "▶ Resume";
+    updatePranaGuideLockButton(false); // Unlocked when paused
+    speakText("Paused.");
+  } else {
+    pranaState.pauseAccMs += Date.now() - pranaState.pauseAt;
+    pranaState.pauseAt = 0;
+    btn.textContent = "⏸ Pause";
+    updatePranaGuideLockButton(true); // Locked when resumed
+    startPranaStep();
+    startPranaClocks();
+  }
+}
+
+function skipPranaPhase() {
+  if(!pranaState.active) return;
+  clearPranaTimers();
+  try { window.speechSynthesis.cancel(); } catch(e){}
+  nextPranaPhase();
+}
+
+function closePranayama() {
+  clearPranaTimers();
+  try { window.speechSynthesis.cancel(); } catch(e){}
+  if(pranaState.active) {
+    const elapsedMs = pranaElapsedTotalMs();
+    const today = todayKey();
+    if(!data.history[today]) data.history[today] = { sets:0, timeMs:0, goal:0 };
+    data.history[today].pranaMs = (data.history[today].pranaMs || 0) + elapsedMs;
+    data.totalPranaMs = (data.totalPranaMs || 0) + elapsedMs;
+  }
+  data.pranaClosedToday = true;
+  saveAll();
+  pranaState.active = false;
+  pranaState.paused = false;
+  releaseWakeLock();
+  qClear();
+  document.getElementById("prana-ov").classList.remove("show");
+  updateDietPlanButtonLockUI();
+}
+
+/* ── Pranayama overlay buttons ──────────────────────────────── */
+const pranaCloseBtn = document.getElementById("prana-close-btn");
+if(pranaCloseBtn) pranaCloseBtn.addEventListener("click", closePranayama);
+
+const pranaPauseBtn = document.getElementById("prana-pause-btn");
+if(pranaPauseBtn) pranaPauseBtn.addEventListener("click", pauseResumePrana);
+
+const pranaSkipBtn = document.getElementById("prana-skip-btn");
+if(pranaSkipBtn) pranaSkipBtn.addEventListener("click", skipPranaPhase);
+
+// Manual start — only allowed after today's goal is complete
+const pranaStartBtn = document.getElementById("prana-start-btn");
+if(pranaStartBtn) pranaStartBtn.addEventListener("click", () => {
+  const done = todayDone();
+  const goal = todayGoal();
+  if(done < goal) {
+    const btn = document.getElementById("prana-start-btn");
+    const orig = btn.innerHTML;
+    btn.innerHTML = "🚫 Complete " + (goal - done) + " more sets first!";
+    btn.style.cssText = "background:linear-gradient(135deg,#3A1000,#1A1A0A);border-color:var(--danger);color:var(--danger)";
+    setTimeout(() => { btn.innerHTML = orig; btn.style.cssText = ""; }, 2800);
+    vib(100);
+    speakText("Complete today's target of " + goal + " rounds first.");
+    return;
+  }
+  showPranayama();
+});
+
+/* ── Controls ────────────────────────────────────────────────── */
+const mainBtn = document.getElementById("main-btn");
+if(mainBtn) mainBtn.addEventListener("click", handleMainBtn);
+
+const resetBtn = document.getElementById("reset-btn");
+if(resetBtn) resetBtn.addEventListener("click", resetSession);
+
+const voiceBtn = document.getElementById("voice-btn");
+if(voiceBtn) voiceBtn.addEventListener("click",()=>{
+  voiceMuted=!voiceMuted; cfg.voiceOn=!voiceMuted;
+  saveAll(); render();
+  if(!voiceMuted) { qClear(); speakMantra("ॐ"); } else { qClear(); }
+});
+
+// CHART TABS — 7d / 14d / 21d day-window switchers
+document.querySelectorAll(".chart-tab[data-days]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const days = parseInt(btn.dataset.days) || 7;
+    if (days > 7 && !data.isPremium) {
+      vib(30);
+      if (confirm("🔒 14-Day & 21-Day History Analytics are PRO Plan features (only ₹4/day!). View PRO plans?")) {
+        showPaywallOverlay();
+      }
+      return;
+    }
+    cfg.chartDays = days;
+    syncChartUI();
+    saveAll();
+    renderBars();
+  });
+});
+
+function syncChartUI() {
+  const days = cfg.chartDays || 7;
+  document.querySelectorAll(".chart-tab[data-days]").forEach(b => {
+    b.classList.toggle("active", parseInt(b.dataset.days) === days);
+  });
+  const t = document.getElementById("chart-title");
+  if(t) t.textContent = "Last "+days+" days progress";
+}
+
+// PACE BUTTONS — Manual pace adjustment disables Auto Phase Speed for today
+function handleManualPaceAdjustment(delta) {
+  cfg.poseSeconds = Math.max(2, Math.min(30, Math.round((cfg.poseSeconds || 5) + delta)));
+  
+  // Disable Auto Phase Speed mode for today when pace is manually altered
+  if (cfg.autoPaceMode !== false) {
+    cfg.autoPaceMode = false;
+    data.manualPaceOverrideDate = todayKey();
+    const btn = document.getElementById("tog-auto-phase");
+    if (btn) btn.className = "tog";
+    if (typeof updatePhaseBadgeUI === "function") updatePhaseBadgeUI();
+    if (typeof setStatus === "function") {
+      setStatus("⏱ Manual Pace set to " + cfg.poseSeconds + "s (Auto Phase Speed disabled for today)");
+    }
+  }
+
+  saveAll();
+  render();
+  if (sess.active && !sess.paused) { poseTimerStart = Date.now(); }
+}
+
+const spdUp = document.getElementById("spd-up");
+if (spdUp) spdUp.addEventListener("click", () => handleManualPaceAdjustment(1));
+
+const spdDn = document.getElementById("spd-dn");
+if (spdDn) spdDn.addEventListener("click", () => handleManualPaceAdjustment(-1));
+
+// Manual advance (auto off)
+const ringWrap = document.querySelector(".ring-wrap");
+if(ringWrap) ringWrap.addEventListener("click",()=>{
+  if(sess.active&&!sess.paused&&!cfg.autoOn) advanceStep();
+});
+
+/* ── Settings ────────────────────────────────────────────────── */
+function openSettings() {
+  document.getElementById("cfg-inc").value      = cfg.dailyIncrease;
+  document.getElementById("cfg-goal").value     = todayGoal();
+  document.getElementById("cfg-max").value      = cfg.maxSets;
+  document.getElementById("cfg-brk").value      = cfg.breakEvery;
+  document.getElementById("cfg-pace").value     = cfg.poseSeconds;
+  document.getElementById("cfg-grace").value    = cfg.graceSeconds;
+  const ltBadge = document.getElementById("cfg-lifetime-badge");
+  if(ltBadge) ltBadge.textContent = data.totalAllTime;
+  const ltInput = document.getElementById("cfg-lifetime");
+  if(ltInput) ltInput.value = data.totalAllTime;
+  togSet("tog-voice",   cfg.voiceOn);
+  togSet("tog-mantras", cfg.mantrasOn !== false);
+  togSet("tog-breath",  cfg.breathOn  !== false);
+  togSet("tog-auto",    cfg.autoOn);
+  togSet("tog-prana",   cfg.pranayamaAuto !== false);
+  document.getElementById("cfg-prana-min").value  = cfg.pranayamaMinutes || 35;
+  document.getElementById("cfg-prana-lang").value = cfg.pranaLang || "en";
+  togSet("tog-alarm", cfg.alarmOn !== false);
+  togSet("tog-daytime-notif", cfg.daytimeNotifOn !== false);
+  togSet("tog-auto-reel", cfg.autoReelOn !== false);
+  const unEl = document.getElementById("cfg-user-name"); if(unEl) unEl.value = cfg.userName || "Vaibhav";
+  const uwEl = document.getElementById("cfg-user-weight"); if(uwEl) uwEl.value = cfg.userWeight || 66;
+  const bsEl = document.getElementById("cfg-bottle-size"); if(bsEl) bsEl.value = cfg.bottleMl || 1000;
+  const dtEl = document.getElementById("cfg-diet-type"); if(dtEl) dtEl.value = cfg.dietType || "veg";
+  const qlEl = document.getElementById("cfg-quote-lang"); if(qlEl) qlEl.value = cfg.quoteLang || cfg.pranaLang || "hi";
+  document.getElementById("cfg-alarm-time").value =
+    String(cfg.alarmHour||5).padStart(2,"0") + ":" +
+    String(cfg.alarmMinute||0).padStart(2,"0");
+  document.getElementById("cfg-voice-info").textContent =
+    hiVoice ? "Active: "+hiVoice.name+" ("+hiVoice.lang+")"
+            : "No hi-IN voice — install Hindi TTS in Android Settings → Language → Text-to-speech.";
+  document.getElementById("dr").classList.add("show");
+}
+function closeSettings() {
+  cfg.dailyIncrease = parseInt(document.getElementById("cfg-inc").value) || 4;
+  const newGoal = parseInt(document.getElementById("cfg-goal").value) || 0;
+  if(newGoal > 0) setTodayGoal(newGoal);  // always anchor programDay when user sets a goal
+  cfg.maxSets       = parseInt(document.getElementById("cfg-max").value)   ||108;
+  cfg.breakEvery    = parseInt(document.getElementById("cfg-brk").value)   ||12;
+  cfg.poseSeconds   = Math.max(2, Math.min(30, parseInt(document.getElementById("cfg-pace").value)||5));
+  cfg.graceSeconds  = Math.max(0, Math.min(30, parseInt(document.getElementById("cfg-grace").value)||5));
+  // totalAllTime is read-only and automatically computed from backup/recovery & completed sets
+  cfg.voiceOn          = togGet("tog-voice");
+  cfg.mantrasOn        = togGet("tog-mantras");
+  cfg.breathOn         = togGet("tog-breath");
+  cfg.autoOn           = togGet("tog-auto");
+  cfg.pranayamaAuto    = togGet("tog-prana");
+  cfg.pranayamaMinutes = parseInt(document.getElementById("cfg-prana-min").value)||35;
+  cfg.pranaLang        = document.getElementById("cfg-prana-lang").value || "en";
+  cfg.alarmOn          = togGet("tog-alarm");
+  cfg.daytimeNotifOn   = togGet("tog-daytime-notif");
+  cfg.autoReelOn       = togGet("tog-auto-reel");
+  const unEl2 = document.getElementById("cfg-user-name"); if(unEl2) cfg.userName = unEl2.value.trim() || "Vaibhav";
+  const uwEl2 = document.getElementById("cfg-user-weight"); if(uwEl2) cfg.userWeight = Math.max(30, Math.min(250, parseInt(uwEl2.value) || 66));
+  const bsEl2 = document.getElementById("cfg-bottle-size"); if(bsEl2) cfg.bottleMl = parseInt(bsEl2.value) || 1000;
+  const dtEl2 = document.getElementById("cfg-diet-type"); if(dtEl2) cfg.dietType = dtEl2.value || "veg";
+  const aTime = document.getElementById("cfg-alarm-time").value || "05:00";
+  const [aH, aM] = aTime.split(":").map(Number);
+  cfg.alarmHour   = isNaN(aH) ? 5  : aH;
+  cfg.alarmMinute = isNaN(aM) ? 0  : aM;
+  const qlEl = document.getElementById("cfg-quote-lang"); if(qlEl) cfg.quoteLang = qlEl.value;
+  voiceMuted      = !cfg.voiceOn;
+  scheduleAlarm();   // reschedule with new time
+  scheduleAyurvedicDietNotifications(); // reschedule diet notifications
+  cfg.chartDays = parseInt(document.getElementById("cfg-chart-days").value) || 21;
+  cfg.chartMode = document.getElementById("cfg-chart-mode").value || "bar";
+  saveAll(); render();
+  document.getElementById("dr").classList.remove("show");
+}
+const togSet=(id,on)=>{ const el=document.getElementById(id); if(el) el.classList.toggle("on",on); };
+const togGet=id=>{ const el=document.getElementById(id); return el ? el.classList.contains("on") : false; };
+["tog-voice","tog-mantras","tog-breath","tog-auto","tog-prana","tog-alarm","tog-daytime-notif","tog-auto-reel"].forEach(id=>{
+  const el = document.getElementById(id);
+  if(el) el.addEventListener("click",function(){this.classList.toggle("on");});
+});
+const settingsBtn = document.getElementById("settings-btn");
+if(settingsBtn) settingsBtn.addEventListener("click",openSettings);
+
+const drClose = document.getElementById("dr-close");
+if(drClose) drClose.addEventListener("click",closeSettings);
+
+const drBg = document.getElementById("dr-bg");
+if(drBg) drBg.addEventListener("click",closeSettings);
+
+const qlSelect = document.getElementById("cfg-quote-lang");
+if(qlSelect) {
+  qlSelect.addEventListener("change", function(e) { setGitaQuoteLanguage(e.target.value); });
+}
+
+const resetDataBtn = document.getElementById("reset-data");
+if(resetDataBtn) resetDataBtn.addEventListener("click", () => {
+  if(!confirm("Reset practice history and data?\n\n(Your active PRO Plan subscription and remaining days will be preserved).")) return;
+
+  // Preserve active subscription state and trial info
+  const preservedSub = {
+    isPremium      : data.isPremium || false,
+    subSku         : data.subSku || "",
+    subDate        : data.subDate || "",
+    trialStartDate : data.trialStartDate || ""
+  };
+
+  // Reset practice data to initial clean state
+  data = {
+    history          : {},
+    totalAllTime     : 0,
+    totalTimeMs      : 0,
+    totalPranaMs     : 0,
+    programDay       : 1,
+    lastDate         : "",
+    baseGoal         : 0,
+    goalDate         : "",
+    lastGoal         : 0,
+    lastCompletedGoal: 0,
+    lastRecoveryAt   : 0,
+    // Restore active PRO plan subscription info
+    isPremium        : preservedSub.isPremium,
+    subSku           : preservedSub.subSku,
+    subDate          : preservedSub.subDate,
+    trialStartDate   : preservedSub.trialStartDate
+  };
+
+  // Clear old version keys so old data isn't re-merged
+  const OLD_KEYS = [
+    "surya-v35","surya-v34","surya-v33","surya-v32","surya-v31","surya-v30","surya-v29",
+    "surya-v28","surya-v27","surya-v26","surya-v25","surya-v24","surya-v23",
+    "surya-v22","surya-v21","surya-v20","surya-v19","surya-v18","surya-v17",
+    "surya-v16","surya-v15","surya-v14","surya-v13","surya-v12","surya-v11",
+    "surya-v10","surya-v9","surya-v8","surya-v7","surya-v6","surya-v5",
+    "surya-v4","surya-v3","surya-v2","surya-v1","surya-namaskara-data-v1","surya-v0"
+  ];
+  OLD_KEYS.forEach(k => { try { localStorage.removeItem(k); } catch(e){} });
+
+  saveAll();
+  location.reload();
+});
+
+/* ── PWA ─────────────────────────────────────────────────────── */
+let deferredPrompt=null;
+window.addEventListener("beforeinstallprompt",e=>{ e.preventDefault(); deferredPrompt=e;
+  setStatus("Tap ⋮ → Add to Home Screen to install offline"); });
+window.addEventListener("appinstalled",()=>setStatus("App installed! Works offline ✓"));
+if("serviceWorker" in navigator){
+  window.addEventListener("load", async () => {
+    try {
+      const reg = await navigator.serviceWorker.register("sw.js");
+      // Show update banner when new SW installs
+      const showBanner = () => {
+        const b = document.getElementById("upd-banner");
+        if(b) b.classList.add("show");
+      };
+      reg.addEventListener("updatefound", () => {
+        const nw = reg.installing;
+        nw.addEventListener("statechange", () => {
+          if(nw.state==="installed" && navigator.serviceWorker.controller) showBanner();
+        });
+      });
+      if(reg.waiting && navigator.serviceWorker.controller) showBanner();
+      // Auto-reload when new SW takes over
+      let refreshing=false;
+      navigator.serviceWorker.addEventListener("controllerchange",()=>{
+        if(!refreshing){refreshing=true;location.reload();}
+      });
+    } catch(e){ console.warn("SW:",e); }
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   MIDNIGHT ROLLOVER SYSTEM — unlocks new goal at 12:00 AM daily
+═══════════════════════════════════════════════════════════════ */
+let _midnightTimer = null;
+
+function checkMidnightRollover() {
+  const today = todayKey();
+  if(data.lastDate && data.lastDate !== today) {
+    const last = new Date(data.lastDate + "T00:00:00");
+    const cur  = new Date(today + "T00:00:00");
+    const daysElapsed = Math.max(1, Math.round((cur - last) / 86400000));
+
+    data.programDay = (data.programDay || 1) + daysElapsed;
+
+    const lastComp = getLastCompletedGoal();
+    for(let d = 1; d < daysElapsed; d++) {
+      const skipDate = new Date(last.getTime() + d * 86400000).toISOString().slice(0, 10);
+      if(!data.history[skipDate]) {
+        const skipGoal = Math.min(lastComp + (cfg.dailyIncrease || 4), cfg.maxSets);
+        data.history[skipDate] = { sets: 0, timeMs: 0, goal: skipGoal };
+      }
+    }
+
+    data.baseGoal = 0;
+    data.goalDate = "";
+    data.lastDate = today;
+    data.pranaFinishedToday = false;
+    data.pranaClosedToday = false;
+
+    const newG = todayGoal();
+    if(!data.history[today]) {
+      data.history[today] = { sets: 0, timeMs: 0, goal: newG };
+    } else if(!data.history[today].goal) {
+      data.history[today].goal = newG;
+    }
+
+    saveAll();
+    render();
+    updateWaterTrackerUI(); // Reset water tracker & unlock +1 Drink Water button at 12 AM Midnight!
+    updateDietPlanButtonLockUI(); // Unlock Pranayama & Diet Plan button locks at 12 AM Midnight!
+    updateClockDisplay();
+    console.log("12 AM Midnight rollover complete | Date:", today, "| Today Goal:", newG);
+  }
+}
+window.checkMidnightRollover = checkMidnightRollover;
+window.scheduleMidnightRollover = scheduleMidnightRollover;
+
+function scheduleMidnightRollover() {
+  if(_midnightTimer) { clearTimeout(_midnightTimer); _midnightTimer = null; }
+
+  const now = new Date();
+  const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
+  const ms = nextMidnight.getTime() - now.getTime();
+
+  _midnightTimer = setTimeout(() => {
+    checkMidnightRollover();
+    scheduleMidnightRollover();
+  }, ms);
+
+  const hrs = Math.floor(ms / 3600000);
+  const mins = Math.round((ms % 3600000) / 60000);
+  console.log("12 AM Midnight rollover scheduled in", hrs + "h " + mins + "m");
+}
+
+// visibilitychange handled in unified handler below
+
+
+
+/* ═══════════════════════════════════════════════════════════════
+   BHAGAVAD GITA DAILY MOTIVATIONAL QUOTES & COMPANION ENGINE
+   (Loaded from gita-quotes.js)
+═══════════════════════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════════════════════
+   DAILY ALARM SYSTEM
+   1. setTimeout fires at exact alarm time in browser / web PWA
+   2. Service Worker & Notification API trigger notification
+   3. Android system alarm deep-link opens Clock app
+   4. visibilitychange — when user opens app near alarm time, speak greeting
+═══════════════════════════════════════════════════════════════ */
+
+async function clearAppCacheAndReload() {
+  if (confirm("Clear old app cache & reload the updated version? (Your workout history will be preserved)")) {
+    try {
+      if ("serviceWorker" in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        for (let reg of registrations) {
+          await reg.unregister();
+        }
+      }
+      if ("caches" in window) {
+        const keys = await caches.keys();
+        for (let key of keys) {
+          await caches.delete(key);
+        }
+      }
+      alert("✓ Old cache cleared! Reloading updated version...");
+      window.location.reload(true);
+    } catch (e) {
+      window.location.reload();
+    }
+  }
+}
+window.clearAppCacheAndReload = clearAppCacheAndReload;
+
+async function requestNotificationPermission() {
+  if(!("Notification" in window)) return false;
+  if(Notification.permission === "granted") return true;
+  if(Notification.permission === "denied") return false;
+  try {
+    const result = await Notification.requestPermission();
+    return result === "granted";
+  } catch(e) { return false; }
+}
+
+let _notifBlinkInterval = null;
+
+function blinkAppIconNotification(customTitle) {
+  const icon = document.getElementById("header-smiling-sun-icon");
+  if (icon) {
+    icon.classList.add("sun-blinking-notif");
+    setTimeout(() => {
+      icon.classList.remove("sun-blinking-notif");
+    }, 10000);
+  }
+
+  // App badge on mobile/PWA
+  if ("setAppBadge" in navigator) {
+    try { navigator.setAppBadge(1); } catch (e) {}
+  }
+
+  // Flash tab title
+  const origTitle = document.title;
+  let count = 0;
+  if (_notifBlinkInterval) clearInterval(_notifBlinkInterval);
+  _notifBlinkInterval = setInterval(() => {
+    document.title = (count % 2 === 0) ? "☀️ 🔔 New Reminder! · Suryasarthi" : origTitle;
+    count++;
+    if (count >= 12) {
+      clearInterval(_notifBlinkInterval);
+      document.title = origTitle;
+      if ("clearAppBadge" in navigator) {
+        try { navigator.clearAppBadge(); } catch (e) {}
+      }
+    }
+  }, 800);
+}
+window.blinkAppIconNotification = blinkAppIconNotification;
+
+async function sendSystemNotification(title, options = {}) {
+  blinkAppIconNotification(title);
+
+  if (!("Notification" in window)) return false;
+  if (Notification.permission !== "granted") {
+    const granted = await requestNotificationPermission();
+    if (!granted) return false;
+  }
+
+  const defaultOptions = {
+    icon: "./icon-192.png",
+    badge: "./icon-192.png",
+    vibrate: [300, 100, 300, 100, 300],
+    requireInteraction: true,
+    tag: "surya-lockscreen-notif",
+    renotify: true,
+    ...options
+  };
+
+  try {
+    if ("serviceWorker" in navigator) {
+      const reg = await navigator.serviceWorker.ready;
+      if (reg && reg.showNotification) {
+        await reg.showNotification(title, defaultOptions);
+        return true;
+      }
+    }
+  } catch (e) {
+    console.warn("SW showNotification error, falling back to window Notification:", e);
+  }
+
+  try {
+    const n = new Notification(title, defaultOptions);
+    if (options.onclick) n.onclick = options.onclick;
+    return true;
+  } catch (e) {
+    console.warn("Window Notification error:", e);
+    return false;
+  }
+}
+
+function showBatteryOptModal() {
+  const modal = document.getElementById("battery-opt-modal");
+  if (modal) {
+    modal.style.display = "flex";
+    requestNotificationPermission();
+  }
+}
+
+function closeBatteryOptModal() {
+  const modal = document.getElementById("battery-opt-modal");
+  if (modal) modal.style.display = "none";
+}
+
+async function testLockscreenNotification() {
+  const granted = await requestNotificationPermission();
+  if (!granted) {
+    alert("Please allow notification permissions in your browser when prompted!");
+    return;
+  }
+
+  const name = cfg.userName || "Vaibhav";
+  const success = await sendSystemNotification(`☀️ System Notification Test · ${name}`, {
+    body: `☀️ Lock-Screen Notifications Active! Your workout and daily alarm reminders will appear here.`,
+    tag: "surya-test-notif",
+    vibrate: [300, 100, 300],
+    data: { type: "test" }
+  });
+
+  if (success) {
+    alert("✓ Test Notification Sent! Lock your phone screen now to test lock-screen reminders!");
+  } else {
+    alert("⚠️ Could not send notification. Please check browser Notification permissions in Android Settings.");
+  }
+}
+
+// ── Morning greeting: fires when app opened near alarm time ─────
+function checkMorningGreeting() {
+  if(!cfg.alarmOn) return;
+  const now  = new Date();
+  const ah   = cfg.alarmHour   || 5;
+  const am   = cfg.alarmMinute || 0;
+  const alarmToday = new Date(now.getFullYear(),now.getMonth(),now.getDate(),ah,am,0);
+  const diffMin = (now - alarmToday) / 60000;
+  if(diffMin >= 0 && diffMin <= 60) {
+    const goal = todayGoal();
+    const name = cfg.userName || "Vaibhav";
+    setTimeout(()=>speakText(
+      "Good morning " + name + "! Time for Surya Namaskara. " +
+      "Today's target is " + goal + " rounds. Om Mitraya Namaha."
+    ), 1000);
+  }
+}
+
+// ── Core alarm: setTimeout fires at exact alarm time ─────────
+let _alarmTimeout = null;
+
+function msUntilAlarm(h, m) {
+  const now  = new Date();
+  const next = new Date(now.getFullYear(),now.getMonth(),now.getDate(),h,m,0,0);
+  if(next <= now) next.setDate(next.getDate() + 1);  // already passed → tomorrow
+  return next.getTime() - now.getTime();
+}
+
+function fmtAlarmTime(h, m) {
+  const ampm = h >= 12 ? "PM" : "AM";
+  const hh   = h % 12 || 12;
+  return hh + ":" + String(m).padStart(2,"0") + " " + ampm;
+}
+
+function fireAlarm(isSnooze = false) {
+  if(!cfg.alarmOn && !isSnooze) { scheduleAlarm(); return; }
+
+  if(!isSnooze) {
+    alarmSnoozeCount = 0;
+  }
+
+  const goal = todayGoal();
+  const quote = getDailyGitaQuote();
+  const meaning = getQuoteMeaning(quote);
+  const titleTag = isSnooze
+    ? `⏰ Snooze Alarm (${alarmSnoozeCount}/2) · Bhagavad Gita`
+    : `☀️ श्रीमद्भगवद्गीता — Daily Motivation`;
+  const notifMsg = quote.ref + "\n" + quote.sanskrit.replace(/\n/g, " ") + "\n" + meaning;
+
+  // 1. Play temple chime sound
+  playAlarmBellSound();
+
+  // 2. Open Bhagavad Gita Motivational Quote Modal
+  showGitaQuoteModal();
+
+  // 3. Show System Notification
+  if("Notification" in window && Notification.permission === "granted") {
+    try {
+      const n = new Notification(titleTag, {
+        body   : notifMsg,
+        icon   : "./icon-192.png",
+        badge  : "./icon-192.png",
+        tag    : "surya-daily-alarm",
+        renotify: true,
+        vibrate: [300,100,300,100,600],
+      });
+      n.onclick = ()=>{ 
+        try { window.focus(); } catch(e){}
+        showGitaQuoteModal();
+        n.close(); 
+      };
+    } catch(e) { console.warn("Notification error:", e); }
+  }
+
+  // 4. AUTO-PLAY Shloka & Meaning immediately when alarm / snooze triggers
+  setTimeout(()=>speakCurrentGitaQuote(), 600);
+
+  // 5. Reschedule regular daily alarm for tomorrow if not a snooze
+  if(!isSnooze) {
+    scheduleAlarm();
+  }
+}
+
+function scheduleAlarm() {
+  if(_alarmTimeout) { clearTimeout(_alarmTimeout); _alarmTimeout = null; }
+  if(!cfg.alarmOn) return;
+
+  const h  = cfg.alarmHour   || 5;
+  const m  = cfg.alarmMinute || 0;
+  const ms = msUntilAlarm(h, m);
+
+  // Request notification permission if not yet decided
+  requestNotificationPermission();
+
+  // Schedule JS timer reliably
+  _alarmTimeout = setTimeout(fireAlarm, ms);
+  console.log("Alarm timer set for", fmtAlarmTime(h, m), "— fires in", Math.round(ms/1000), "sec");
+}
+
+function _tryAndroidAlarm(h, m) {
+  const hour = parseInt(h !== undefined ? h : (cfg.alarmHour || 5));
+  const min  = parseInt(m !== undefined ? m : (cfg.alarmMinute || 0));
+  const name = cfg.userName || "Vaibhav";
+  const label = "Suryasarthi 108 - " + name;
+  const timeStr = String(hour).padStart(2, '0') + ":" + String(min).padStart(2, '0');
+
+  // Primary SET_ALARM Intent
+  const intentSet = `intent:#Intent;action=android.intent.action.SET_ALARM;i.android.intent.extra.alarm.HOUR=${hour};i.android.intent.extra.alarm.MINUTES=${min};S.android.intent.extra.alarm.MESSAGE=${encodeURIComponent(label)};B.android.intent.extra.alarm.SKIP_UI=false;end`;
+
+  // Secondary SHOW_ALARMS Intent (Opens Clock app directly)
+  const intentShow = `intent:#Intent;action=android.intent.action.SHOW_ALARMS;end`;
+
+  // Legacy intent:// format
+  const intentLegacy = `intent://alarm/#Intent;action=android.intent.action.SET_ALARM;extra.android.intent.extra.alarm.HOUR=${hour};extra.android.intent.extra.alarm.MINUTES=${min};extra.android.intent.extra.alarm.MESSAGE=${encodeURIComponent(label)};extra.android.intent.extra.alarm.SKIP_UI=false;end`;
+
+  // Update in-page status info (no thread-blocking alert!)
+  const infoEl = document.getElementById("cfg-voice-info");
+  if (infoEl) {
+    infoEl.textContent = "⏰ Opening Clock app for " + timeStr + " (" + label + ")…";
+    infoEl.style.color = "var(--acc-lt)";
+  }
+
+  // Trigger direct intent navigation synchronously
+  try {
+    window.location.href = intentSet;
+  } catch (e1) {
+    try {
+      window.location.href = intentShow;
+    } catch (e2) {
+      try {
+        window.location.href = intentLegacy;
+      } catch (e3) {
+        console.warn("Android Clock intent navigation unavailable.");
+      }
+    }
+  }
+}
+
+function cancelAlarm() {
+  if(_alarmTimeout) { clearTimeout(_alarmTimeout); _alarmTimeout = null; }
+  setStatus("Alarm cancelled");
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   DAYTIME BEST-FRIEND COMPANION NOTIFICATION SYSTEM
+   Connects with user throughout the day with a warm, encouraging,
+   workout-partner brand voice in Hindi, Marathi, and English.
+   Autoplays voice utterance when notification is clicked.
+═══════════════════════════════════════════════════════════════ */
+
+const DAYTIME_NOTIFICATIONS = {
+  morning: [
+    {
+      title: "🌞 Morning Sunshine Check-In",
+      badge: "🌅 Morning Reminder",
+      avatar: "🌞",
+      en: "The sun has checked in. Are you coming?",
+      hi: "सूरज आ चुका है, आपका इंतज़ार कर रहा है! क्या आप आ रहे हैं?",
+      mr: "सूर्यदेव आले आहेत, तुझी वाट पाहत आहेत! तू येतोयस ना?"
+    },
+    {
+      title: "☀️ Your Mat Misses You!",
+      badge: "☀️ Morning Reminder",
+      avatar: "☀️",
+      en: "We saved your mat. It misses your footsteps.",
+      hi: "हमने आपकी चटाई संभाल कर रखी है, इसे आपके कदमों की याद आ रही है।",
+      mr: "आम्ही तुझी मॅट सांभाळून ठेवली आहे, तिला तुझ्या पावलांची आठवण येतेय."
+    },
+    {
+      title: "🙏 Your First Bow is Waiting",
+      badge: "🙏 Morning Reminder",
+      avatar: "🙏",
+      en: "Your first Surya Namaskar is waiting. The rest will follow.",
+      hi: "पहला सूर्य नमस्कार आपका इंतज़ार कर रहा है, बाकी सब अपने आप हो जाएगा।",
+      mr: "पहिला सूर्य नमस्कार तुझी वाट पाहत आहे, बाकी सर्व सहज घडेल."
+    },
+    {
+      title: "💛 Good Morning, Friend!",
+      badge: "💛 Morning Reminder",
+      avatar: "💛",
+      en: "Good morning! Your body is ready before your mind is.",
+      hi: "गुड मॉर्निंग! मन से पहले आपका शरीर आज के अभ्यास के लिए तैयार है।",
+      mr: "गुड मॉर्निंग! मनापेक्षा आधी तुझे शरीर आजच्या सरावासाठी सज्ज आहे."
+    },
+    {
+      title: "🌅 Five Minutes for You",
+      badge: "🌅 Morning Reminder",
+      avatar: "🌅",
+      en: "Five minutes now. You'll thank yourself all day.",
+      hi: "बस 5 मिनट का अभ्यास, और पूरा दिन आप खुद को धन्यवाद देंगे।",
+      mr: "फक्त ५ मिनिटांचा सराव, आणि दिवसभर तू स्वतःला धन्यवाद देशील."
+    }
+  ],
+
+  skipped: [
+    {
+      title: "😌 Today is a Fresh Start",
+      badge: "😌 Gentle Catch-Up",
+      avatar: "😌",
+      en: "We noticed yesterday was a rest day. Today is a fresh start.",
+      hi: "कल विश्राम का दिन था! आज एक नई और ताज़ा शुरुआत का दिन है।",
+      mr: "काल विश्रांतीचा दिवस होता! आज एका नवीन व ताज्या सुरुवातीचा दिवस आहे."
+    },
+    {
+      title: "🧘 Your Streak is Waiting",
+      badge: "🧘 Streak Encouragement",
+      avatar: "🧘",
+      en: "Your streak isn't angry. It's just waiting for you.",
+      hi: "आपकी स्ट्राइक नाराज़ नहीं है, वह बस आपके लौटने का इंतज़ार कर रही है।",
+      mr: "तुझी स्ट्राइक रागावलेली नाही, ती फक्त तू येण्याची वाट पाहतेय."
+    },
+    {
+      title: "🌞 Another Beautiful Chance",
+      badge: "🌞 Fresh Opportunity",
+      avatar: "🌞",
+      en: "The sun rises every day. You get another chance too.",
+      hi: "सूरज हर दिन नया उगता है, आपको भी हर दिन एक नया मौका मिलता है।",
+      mr: "सूर्य रोज नवीन उगवतो, तुलाही रोज एक नवीन संधी मिळते."
+    },
+    {
+      title: "💛 Focus on Today's Round",
+      badge: "💛 Best Friend Nudge",
+      avatar: "💛",
+      en: "One missed day doesn't define you. One completed round today does.",
+      hi: "एक छूटा हुआ दिन आपको परिभाषित नहीं करता, आज का एक पूरा राउंड करता है!",
+      mr: "एक चुकलेला दिवस तुला ठरवत नाही, आज पूर्ण केलेला एक राऊंड ठरवतो!"
+    },
+    {
+      title: "🙏 Your Place is Reserved",
+      badge: "🙏 Welcome Back",
+      avatar: "🙏",
+      en: "We've kept your place on the mat.",
+      hi: "मैट पर आपकी जगह आज भी संभाल कर रखी है, आइए साथ अभ्यास करें!",
+      mr: "मॅटवर तुझी जागा आजसुद्धा राखीव आहे, चल एकत्र सराव करूया!"
+    }
+  ],
+
+  playful: [
+    {
+      title: "🥺 Mat Enquiry!",
+      badge: "🥺 Playful Check-In",
+      avatar: "🥺",
+      en: "Your yoga mat asked where you've been.",
+      hi: "आपकी योगा मैट ने पूछा कि आप कहाँ थे? इसे आपकी याद आ रही है!",
+      mr: "तुझ्या योगा मॅटने विचारलं, तू कुठे होतास? तिला तुझी आठवण येतेय!"
+    },
+    {
+      title: "☀️ Favorite Person Alert",
+      badge: "☀️ Playful Reminder",
+      avatar: "☀️",
+      en: "The sun showed up. We're just waiting for our favorite person.",
+      hi: "सूरज तो समय पर आ गया, बस हम अपने पसंदीदा दोस्त का इंतज़ार कर रहे हैं!",
+      mr: "सूर्य वेळेवर आला, आम्ही फक्त आमच्या आवडत्या मित्राची वाट पाहतोय!"
+    },
+    {
+      title: "❤️ Counting Surya Namaskars",
+      badge: "❤️ Workout Partner",
+      avatar: "❤️",
+      en: "We don't count excuses. We count Surya Namaskars.",
+      hi: "हम बहाने नहीं गिनते, हम बस आपके सूर्य नमस्कार गिनते हैं!",
+      mr: "आम्ही कारणे मोजत नाही, आम्ही फक्त तुमचे सूर्य नमस्कार मोजतो!"
+    },
+    {
+      title: "😄 Refreshing Feed...",
+      badge: "😄 Friendly Tease",
+      avatar: "😄",
+      en: "We've been refreshing... still no Surya Namaskar from you.",
+      hi: "हम बार-बार रिफ्रेश कर रहे हैं... अभी तक आपका सूर्य नमस्कार नहीं आया!",
+      mr: "आम्ही सतत रिफ्रेश करतोय... अजून तुझा सूर्य नमस्कार आला नाही!"
+    },
+    {
+      title: "🧘 Body Reminder Sent!",
+      badge: "🧘 Inner Connection",
+      avatar: "🧘",
+      en: "Your body sent us a reminder before your phone did.",
+      hi: "फोन से पहले आपके शरीर ने हमें याद दिलाया कि आज का अभ्यास बाकी है!",
+      mr: "फोनआधी तुझ्या शरीराने आम्हाला आठवण करून दिली की आजचा सराव बाकी आहे!"
+    }
+  ],
+
+  challenge: [
+    {
+      title: "🔥 Proud of You",
+      badge: "🔥 Challenge Mode",
+      avatar: "🔥",
+      en: "Today's practice is making future you proud.",
+      hi: "आज का अभ्यास शुरू करें! भविष्य का 'आप' आज की मेहनत पर गर्व करेगा।",
+      mr: "आजचा सराव सुरू कर! भविष्यातील 'तू' आजच्या कष्टांवर नक्कीच अभिमान बाळगेल."
+    },
+    {
+      title: "💪 Strongest Version",
+      badge: "💪 Level Up",
+      avatar: "💪",
+      en: "One more round. Your strongest version is getting closer.",
+      hi: "एक राउंड और! आपका सबसे मजबूत रूप हर दिन करीब आ रहा है।",
+      mr: "अजून एक राऊंड! तुझे सर्वात मजबूत रूप दररोज जवळ येत आहे."
+    },
+    {
+      title: "🌞 Tomorrow's Confidence",
+      badge: "🌞 Daily Discipline",
+      avatar: "🌞",
+      en: "Today's round is tomorrow's confidence.",
+      hi: "आज का एक राउंड कल आपके आत्मविश्वास को दोगुना कर देगा!",
+      mr: "आजचा एक राऊंड उद्या तुझा आत्मविश्वास दुप्पट करेल!"
+    },
+    {
+      title: "🎯 Quiet Consistency",
+      badge: "🎯 Transformation",
+      avatar: "🎯",
+      en: "Consistency is quietly changing your life.",
+      hi: "आपकी यह निरंतरता धीरे-धीरे आपकी ज़िंदगी बदल रही है।",
+      mr: "तुझं हे सातत्य हळूहळू तुझं आयुष्य बदलत आहे."
+    },
+    {
+      title: "🙌 Promise to Yourself",
+      badge: "🙌 Sacred Promise",
+      avatar: "🙌",
+      en: "Every bow to the sun is a promise to yourself.",
+      hi: "सूरज को किया हर नमन, खुद से किया एक सच्चा वादा है।",
+      mr: "सूर्याला केलेला प्रत्येक नमस्कार, स्वतःला दिलेला एक खरा शब्द आहे."
+    }
+  ],
+
+  milestone: [
+    {
+      title: "🎉 21 Days Milestone!",
+      badge: "🎉 Habit Milestone",
+      avatar: "🎉",
+      en: "21 days! Habits are beginning to choose you.",
+      hi: "21 दिन पूरे! अब यह आदत आपको एक स्वस्थ जीवन की ओर ले जा रही है।",
+      mr: "२१ दिवस पूर्ण! आता ही सवय तुला एका निरोगी आयुष्याकडे घेऊन जात आहे."
+    },
+    {
+      title: "🏅 108 Pure Discipline!",
+      badge: "🏅 Century Milestone",
+      avatar: "🏅",
+      en: "108 completed! That's discipline, not luck.",
+      hi: "108 सूर्य नमस्कार पूरे! यह किस्मत नहीं, आपका अटूट अनुशासन है!",
+      mr: "१०८ सूर्य नमस्कार पूर्ण! हे नशीब नाही, तुझी अथांग शिस्त आहे!"
+    },
+    {
+      title: "🌟 500 Legend Status",
+      badge: "🌟 Grand Milestone",
+      avatar: "🌟",
+      en: "500 Surya Namaskars. Your dedication deserves a standing ovation.",
+      hi: "500 सूर्य नमस्कार! आपका यह समर्पण वाकई अद्भुत है!",
+      mr: "५०० सूर्य नमस्कार! तुझं हे समर्पण खरंच वाखाणण्याजोगे आहे!"
+    },
+    {
+      title: "💯 1000 Club Member!",
+      badge: "💯 Supreme Milestone",
+      avatar: "💯",
+      en: "Four digits look good on you. Welcome to the 1000 club!",
+      hi: "1000 सूर्य नमस्कार पूरे! 1000 क्लब में आपका स्वागत है दोस्त!",
+      mr: "१००० सूर्य नमस्कार पूर्ण! १००० क्लबमध्ये तुझे सहर्ष स्वागत आहे मित्रा!"
+    },
+    {
+      title: "🙏 Inspiring Journey",
+      badge: "🙏 Inspiration",
+      avatar: "🙏",
+      en: "Your journey is inspiring someone who hasn't started yet.",
+      hi: "आपकी यह यात्रा किसी ऐसे इंसान को प्रेरणा दे रही है जिसने अभी शुरुआत भी नहीं की।",
+      mr: "तुझा हा प्रवास अशा व्यक्तीला प्रेरणा देतोय ज्याने अजून सुरुवातही केलेली नाही."
+    }
+  ],
+
+  nudges: [
+    {
+      title: "⏰ 5 Minutes, 12 Poses",
+      badge: "⏰ Quick Nudge",
+      avatar: "⏰",
+      en: "Five minutes. Twelve poses. One happier you.",
+      hi: "बस 5 मिनट, 12 आसन, और एक अधिक खुशहाल आप!",
+      mr: "फक्त ५ मिनिटे, १२ आसने, आणि एक अधिक आनंदी तू!"
+    },
+    {
+      title: "☀️ Move First, Feel Inspired",
+      badge: "☀️ Gentle Push",
+      avatar: "☀️",
+      en: "Don't wait to feel motivated. Move first.",
+      hi: "प्रेरणा का इंतज़ार मत करो, पहला कदम बढ़ाओ, प्रेरणा खुद आएगी!",
+      mr: "प्रेरणेची वाट पाहू नकोस, पहिले पाऊल टाक, प्रेरणा आपोआप येईल!"
+    },
+    {
+      title: "💛 Thank You Note From Future You",
+      badge: "💛 Best Friend Note",
+      avatar: "💛",
+      en: "Your future self left you a thank-you note. It starts with today's practice.",
+      hi: "आपके आने वाले कल ने आपको धन्यवाद कहा है, जिसकी शुरुआत आज के अभ्यास से होती है।",
+      mr: "तुझ्या येणाऱ्या उद्याने तुला धन्यवाद मानले आहेत, ज्याची सुरुवात आजच्या सरावाने होते."
+    },
+    {
+      title: "🌿 Energy is Created",
+      badge: "🌿 Energy Spark",
+      avatar: "🌿",
+      en: "Energy isn't found. It's created.",
+      hi: "ऊर्जा कहीं ढूंढनी नहीं पड़ती, सूर्य नमस्कार से खुद पैदा होती है!",
+      mr: "ऊर्जा कुठे शोधावी लागत नाही, सूर्य नमस्काराने स्वतः निर्माण होते!"
+    },
+    {
+      title: "🧘 Just One Round!",
+      badge: "🧘 Micro Goal",
+      avatar: "🧘",
+      en: "Just one round. We know you'll do another.",
+      hi: "बस एक राउंड कर के देखिए, हमें यकीन है आप दूसरा भी कर लेंगे!",
+      mr: "फक्त एक राऊंड करून बघ, आम्हाला खात्री आहे तू दुसराही करशील!"
+    }
+  ],
+
+  emotional: [
+    {
+      title: "❤️ Show Up Today",
+      badge: "❤️ Best Friend Love",
+      avatar: "❤️",
+      en: "We don't want perfection. We just want to see you today.",
+      hi: "हमें परफेक्शन नहीं चाहिए, हमें बस आज आपको मैट पर देखना है।",
+      mr: "आम्हाला परिपूर्णता नकोय, आम्हाला फक्त आज तुला मॅटवर बघायचे आहे."
+    },
+    {
+      title: "🌅 Meet Yourself Today",
+      badge: "🌅 Soul Connection",
+      avatar: "🌅",
+      en: "The sun has never missed meeting you. Don't miss meeting yourself.",
+      hi: "सूरज ने कभी आपसे मिलना नहीं छोड़ा, आज आप खुद से मिलना मत भूलना।",
+      mr: "सूर्याने कधीही तुला भेटणे सोडले नाही, आज तू स्वतःला भेटायला विसरू नकोस."
+    },
+    {
+      title: "🙏 Conversation With Your Body",
+      badge: "🙏 Body Awareness",
+      avatar: "🙏",
+      en: "Every Surya Namaskar is a conversation with your body.",
+      hi: "हर सूर्य नमस्कार आपके शरीर और आत्मा के बीच का एक खूबसूरत संवाद है।",
+      mr: "प्रत्येक सूर्य नमस्कार हा तुझ्या शरीर आणि आत्म्यामधील एक सुंदर संवाद आहे."
+    },
+    {
+      title: "💛 Investment in Health",
+      badge: "💛 True Wealth",
+      avatar: "💛",
+      en: "Some investments pay in money. This one pays in health.",
+      hi: "कुछ निवेश पैसों में रिटर्न देते हैं, यह निवेश आपको बेहतरीन सेहत देता है।",
+      mr: "काही गुंतवणुकी पैशात परतावा देतात, ही गुंतवणूक तुला उत्तम आरोग्य देते."
+    },
+    {
+      title: "🌞 Show Up For Yourself",
+      badge: "🌞 Daily Promise",
+      avatar: "🌞",
+      en: "Show up for yourself. We'll handle the reminder.",
+      hi: "आप खुद के लिए समय निकालिए, याद दिलाने की ज़िम्मेदारी हमारी है!",
+      mr: "तू स्वतःसाठी वेळ काढ, आठवण करून देण्याची जबाबदारी आमची!"
+    }
+  ]
+};
+
+let activeCompanionNotification = null;
+
+function getBestFriendNotificationContext(period) {
+  const yesterdayDone = todayDoneFor(dayKey(1));
+  const todayDoneCount = todayDone();
+  const todayGoalCount = todayGoal();
+  const streak = computeStreak();
+  const totalAllTime = data.totalAllTime || 0;
+
+  // 1. Check for Milestone
+  if (streak === 21) return DAYTIME_NOTIFICATIONS.milestone[0];
+  if (totalAllTime === 108) return DAYTIME_NOTIFICATIONS.milestone[1];
+  if (totalAllTime === 500) return DAYTIME_NOTIFICATIONS.milestone[2];
+  if (totalAllTime === 1000) return DAYTIME_NOTIFICATIONS.milestone[3];
+
+  // 2. Check if skipped yesterday
+  if (yesterdayDone === 0) {
+    const idx = Math.floor(Math.random() * DAYTIME_NOTIFICATIONS.skipped.length);
+    return DAYTIME_NOTIFICATIONS.skipped[idx];
+  }
+
+  // 3. High goal aim (108)
+  if (todayGoalCount >= 108) {
+    const idx = Math.floor(Math.random() * DAYTIME_NOTIFICATIONS.challenge.length);
+    return DAYTIME_NOTIFICATIONS.challenge[idx];
+  }
+
+  // 4. Period specific selection
+  let list = DAYTIME_NOTIFICATIONS.morning;
+  if (period === "afternoon") {
+    list = (todayDoneCount === 0) ? DAYTIME_NOTIFICATIONS.playful : DAYTIME_NOTIFICATIONS.nudges;
+  } else if (period === "evening") {
+    list = (todayDoneCount < todayGoalCount) ? DAYTIME_NOTIFICATIONS.emotional : DAYTIME_NOTIFICATIONS.nudges;
+  }
+
+  const idx = Math.floor(Math.random() * list.length);
+  return list[idx];
+}
+
+function getNotificationMessageInLang(item, langOverride) {
+  if (!item) return "";
+  const lang = langOverride || cfg.quoteLang || cfg.pranaLang || "hi";
+  if (lang === "mr") return item.mr || item.hi || item.en;
+  if (lang === "en") return item.en || item.hi;
+  return item.hi || item.en;
+}
+
+function triggerDaytimeNotification(period) {
+  if (cfg.daytimeNotifOn === false) return;
+  // If user has already finished today's goal and it's afternoon/evening, no need to interrupt
+  if (period !== "morning" && todayDone() >= todayGoal()) return;
+
+  const item = getBestFriendNotificationContext(period);
+  activeCompanionNotification = item;
+
+  const msg = getNotificationMessageInLang(item);
+
+  // 1. Show System Notification
+  if ("Notification" in window && Notification.permission === "granted") {
+    try {
+      const n = new Notification(item.title, {
+        body: msg,
+        icon: "./icon-192.png",
+        badge: "./icon-192.png",
+        tag: "surya-daytime-friend",
+        renotify: true,
+        vibrate: [200, 100, 200]
+      });
+      n.onclick = () => {
+        try { window.focus(); } catch (e) {}
+        showCompanionModal(item);
+        n.close();
+      };
+    } catch (e) { console.warn("Notification error:", e); }
+  }
+
+  // 2. If app is visible, pop companion card and autoplay voice
+  if (document.visibilityState === "visible") {
+    showCompanionModal(item);
+  }
+}
+
+let _daytimeNotifTimer = null;
+
+function scheduleDaytimeNotifications() {
+  if (_daytimeNotifTimer) { clearInterval(_daytimeNotifTimer); _daytimeNotifTimer = null; }
+  if (cfg.daytimeNotifOn === false) return;
+
+  // Check every 60 seconds if it's time for morning (8:30 AM), afternoon (1:30 PM), or evening (6:30 PM)
+  let lastTriggeredHour = -1;
+
+  _daytimeNotifTimer = setInterval(() => {
+    const now = new Date();
+    const h = now.getHours();
+    const m = now.getMinutes();
+
+    if (h === lastTriggeredHour) return;
+
+    if (h === 8 && m >= 30 && m <= 45) {
+      lastTriggeredHour = h;
+      triggerDaytimeNotification("morning");
+    } else if (h === 13 && m >= 30 && m <= 45) {
+      lastTriggeredHour = h;
+      triggerDaytimeNotification("afternoon");
+    } else if (h === 18 && m >= 30 && m <= 45) {
+      lastTriggeredHour = h;
+      triggerDaytimeNotification("evening");
+    }
+  }, 60000);
+}
+
+function showCompanionModal(item) {
+  if (!item) item = activeCompanionNotification || getBestFriendNotificationContext("morning");
+  activeCompanionNotification = item;
+
+  const lang = cfg.quoteLang || cfg.pranaLang || "hi";
+  const msg = getNotificationMessageInLang(item, lang);
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  const avEl = document.getElementById("companion-avatar"); if(avEl) avEl.textContent = item.avatar || "☀️";
+  const bgEl = document.getElementById("companion-badge");  if(bgEl) bgEl.textContent = "Online · " + (item.badge || "Best Friend Check-In");
+  const ttEl = document.getElementById("companion-title");  if(ttEl) ttEl.textContent = item.title || "Suryasarthi Best Friend";
+  const bdEl = document.getElementById("companion-body");   if(bdEl) bdEl.textContent = msg;
+
+  const wtEl = document.getElementById("whatsapp-time-label");   if(wtEl) wtEl.textContent = timeStr;
+  const btEl = document.getElementById("whatsapp-bubble-time");  if(btEl) btEl.textContent = timeStr;
+
+  const modal = document.getElementById("companion-modal");
+  if (modal) {
+    modal.style.display = "flex";
+    modal.classList.add("show");
+  }
+
+  // AUTO-PLAY VOICE ON NOTIFICATION OPEN
+  setTimeout(() => speakCompanionNotification(item), 400);
+}
+
+function closeCompanionModal() {
+  const modal = document.getElementById("companion-modal");
+  if (modal) {
+    modal.style.display = "none";
+    modal.classList.remove("show");
+  }
+  qClear();
+}
+
+function startPracticeFromCompanion() {
+  closeCompanionModal();
+  startSession();
+}
+
+window.showCompanionModal = showCompanionModal;
+window.closeCompanionModal = closeCompanionModal;
+window.startPracticeFromCompanion = startPracticeFromCompanion;
+
+function speakCompanionNotification(item) {
+  if (voiceMuted || !window.speechSynthesis) return;
+  if (!item) item = activeCompanionNotification || getBestFriendNotificationContext("morning");
+  
+  const lang = cfg.quoteLang || cfg.pranaLang || "hi";
+  const msg = getNotificationMessageInLang(item, lang);
+
+  qClear();
+
+  const u = new SpeechSynthesisUtterance(msg);
+  if (lang === "en") {
+    u.lang = "en-IN"; u.rate = 0.98;
+  } else if (lang === "mr") {
+    u.lang = "mr-IN"; u.rate = 0.92;
+  } else {
+    u.lang = "hi-IN"; u.rate = 0.92;
+  }
+
+  qSpeak(u);
+}
+
+function replayCompanionVoice() {
+  speakCompanionNotification(activeCompanionNotification);
+}
+
+function startPracticeFromCompanion() {
+  closeCompanionModal();
+  if (!sess.active) {
+    handleMainBtn();
+  }
+}
+
+window.showCompanionModal = showCompanionModal;
+window.closeCompanionModal = closeCompanionModal;
+window.replayCompanionVoice = replayCompanionVoice;
+window.startPracticeFromCompanion = startPracticeFromCompanion;
+
+/* ═══════════════════════════════════════════════════════════════
+   AYURVEDIC DIET & HYDRATION ENGINE
+   (Loaded from ayurvedic-diet.js)
+═══════════════════════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════════════════════
+   IN-APP BILLING — Google Play / Digital Goods API
+   Product IDs matching Google Play Console:
+     surya.pass.1month  — One-Month Pass (non-renewing)
+     surya.sub.6month   — 6-Month auto-renewing subscription
+     surya.sub.12month  — 12-Month auto-renewing subscription
+═══════════════════════════════════════════════════════════════ */
+let selectedSku = "surya.sub.12month";
+
+function selectSubTier(sku) {
+  selectedSku = sku;
+  ["1month", "3month", "6month", "12month"].forEach(t => {
+    const el = document.getElementById("sub-card-" + t);
+    if(el) {
+      if(sku.includes(t)) {
+        el.style.borderColor = "#FBBF24";
+        el.style.borderWidth = "2.5px";
+        el.style.background = "rgba(245,158,11,0.12)";
+        el.style.boxShadow = "0 0 14px rgba(245,158,11,0.4)";
+      } else {
+        el.style.borderColor = "var(--bdr)";
+        el.style.borderWidth = "1.5px";
+        el.style.background = "var(--surf)";
+        el.style.boxShadow = "none";
+      }
+    }
+  });
+}
+
+function closePaywallOverlay() {
+  const ov = document.getElementById("paywall-ov");
+  if(ov) ov.classList.remove("show");
+  checkAppLockState();
+}
+
+async function executePlayPurchase() {
+  const btn = document.getElementById("pay-sub-btn");
+  if(!btn) return;
+  const origText = btn.innerHTML;
+  btn.innerHTML = "⏳ Connecting to Google Play…";
+  btn.disabled = true;
+
+  try {
+    const priceMap = {
+      "surya.pass.1month": "99",
+      "surya.sub.3month": "269",
+      "surya.sub.6month": "479",
+      "surya.sub.12month": "749"
+    };
+    const price = priceMap[selectedSku] || "749";
+
+    // 1. Digital Goods API for Android TWA (Google Play Store App)
+    if ("getDigitalGoodsService" in window) {
+      try {
+        const service = await window.getDigitalGoodsService("https://play.google.com/billing");
+        const details = await service.getDetails([selectedSku]);
+
+        const paymentMethods = [{
+          supportedMethods: "https://play.google.com/billing",
+          data: { sku: selectedSku }
+        }];
+
+        const request = new PaymentRequest(paymentMethods, {
+          total: { label: "SuryaSarathi PRO Subscription", amount: { currency: "INR", value: price } }
+        });
+
+        const response = await request.show();
+        await response.complete("success");
+
+        grantPremiumAccess(selectedSku, response);
+        closePaywallOverlay();
+        alert("🎉 Welcome to SuryaSarathi PRO! Your Google Play subscription is active.");
+        return;
+      } catch (dgErr) {
+        console.warn("Digital Goods API not active in this environment:", dgErr);
+      }
+    }
+
+    // 2. Web Browser Preview / Staging Fallback (outside Play Store APK)
+    grantPremiumAccess(selectedSku, null);
+    closePaywallOverlay();
+    alert("🎉 Welcome to SuryaSarathi PRO!\n\n(Note: Real Google Play Billing automatically triggers when users install your app from the Google Play Store).");
+
+  } catch (err) {
+    if (err.name !== "AbortError") {
+      alert("Billing info: " + (err.message || "Purchase cancelled"));
+    }
+  } finally {
+    btn.innerHTML = origText;
+    btn.disabled = false;
+  }
+}
+
+function showPaywallOverlay() {
+  renderSubOverlayUI();
+  const ov = document.getElementById("paywall-ov");
+  if(ov) ov.classList.add("show");
+}
+
+function dismissBenefitsCard() {
+  data.hideDay1Benefits = true;
+  saveAll();
+  render();
+}
+
+/* ── Free Trial & App Lock Engine ───────────────────────────── */
+function getTrialInfo() {
+  if (data.isPremium) {
+    return { isTrial: false, isLocked: false, daysLeft: 0, daysElapsed: 0 };
+  }
+
+  if (!data.trialStartDate) {
+    data.trialStartDate = new Date().toISOString();
+    saveAll();
+  }
+
+  const start = new Date(data.trialStartDate);
+  const end = new Date(start.getTime() + 7 * 86400000);
+  const now = new Date();
+  const diffMs = now - start;
+  const daysElapsed = Math.floor(diffMs / 86400000);
+  const daysLeft = Math.max(0, 7 - daysElapsed);
+  const isLocked = daysLeft <= 0;
+
+  const opt = { month: 'short', day: 'numeric', year: 'numeric' };
+  return {
+    isTrial: true,
+    isLocked: isLocked,
+    daysLeft: daysLeft,
+    daysElapsed: daysElapsed,
+    startDateStr: start.toLocaleDateString(undefined, opt),
+    endDateStr: end.toLocaleDateString(undefined, opt)
+  };
+}
+
+function checkAppLockState() {
+  const trial = getTrialInfo();
+  const sub = getSubscriptionInfo();
+
+  if (data.isPremium && sub.active) {
+    hideAppLock();
+    return false;
+  }
+
+  if (trial.isLocked) {
+    showAppLock();
+    return true;
+  }
+
+  hideAppLock();
+  return false;
+}
+
+function showAppLock() {
+  const lockOv = document.getElementById("app-lock-ov");
+  if(lockOv) lockOv.classList.add("show");
+}
+
+function hideAppLock() {
+  const lockOv = document.getElementById("app-lock-ov");
+  if(lockOv) lockOv.classList.remove("show");
+}
+
+/* ── Subscription Status & Marketing Reminders ───────────────── */
+function getSubscriptionInfo() {
+  if (!data.isPremium || !data.subDate) {
+    return { active: false, daysLeft: 0, isExpired: false, isExpiringSoon: false };
+  }
+  const start = new Date(data.subDate);
+  const sku = data.subSku || "surya.sub.6month";
+  const is12m = sku.includes("12month");
+  const is6m  = sku.includes("6month");
+  const is1m  = sku.includes("pass.1month") || sku.includes("1month");
+
+  const durationDays = is12m ? 365 : (is6m ? 180 : 30);
+  // 1-Month Plan = One-Time Pass (No Auto-Renew)
+  // 6-Month & 12-Month Plans = Auto-Renewing Subscriptions via Google Play Store
+  const autoRenew = is6m || is12m;
+
+  const end = new Date(start.getTime() + durationDays * 86400000);
+  const now = new Date();
+  const diffMs = end - now;
+  const daysLeft = Math.max(0, Math.ceil(diffMs / 86400000));
+  const active = diffMs > 0;
+
+  const opt = { month: 'short', day: 'numeric', year: 'numeric' };
+  return {
+    active,
+    sku,
+    planName: is12m ? "12-Month Annual Pass" : (is6m ? "6-Month Subscription Plan" : "1-Month Pass"),
+    startDateStr: start.toLocaleDateString(undefined, opt),
+    endDateStr: end.toLocaleDateString(undefined, opt),
+    daysLeft,
+    autoRenew,
+    isExpiringSoon: active && daysLeft <= 2,
+    isExpired: !active
+  };
+}
+
+function renderSubOverlayUI() {
+  const sub = getSubscriptionInfo();
+  const trial = getTrialInfo();
+  const container = document.getElementById("sub-active-container");
+  if(!container) return;
+
+  if (sub.active) {
+    const renewBadge = sub.autoRenew 
+      ? '<span style="background:var(--acc-dim);color:var(--acc-lt);border:1px solid var(--acc);font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;">🔄 Auto-Renewing (Play Store)</span>'
+      : '<span style="background:var(--surf2);color:var(--muted);border:1px solid var(--bdr);font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;">⏳ One-Time Pass (No Auto-Renew)</span>';
+
+    const daysBadge = sub.isExpiringSoon
+      ? `<div style="background:linear-gradient(135deg,#3A1000,#1A0000);border:1px solid var(--danger);color:var(--danger);font-size:12px;font-weight:800;padding:6px 12px;border-radius:10px;margin-top:8px;">⚠️ ${sub.daysLeft} Day${sub.daysLeft>1?'s':''} Remaining — Renew now to keep your streak!</div>`
+      : `<div style="background:var(--acc-dim);border:1px solid var(--acc);color:var(--acc-lt);font-size:12px;font-weight:800;padding:6px 12px;border-radius:10px;margin-top:8px;">⏳ ${sub.daysLeft} Days Remaining</div>`;
+
+    container.innerHTML = `
+      <div style="background:linear-gradient(135deg,var(--surf2),var(--surf));border:1.5px solid var(--acc);border-radius:16px;padding:14px;margin-bottom:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div style="font-size:15px;font-weight:800;color:var(--acc);">${sub.planName}</div>
+          ${renewBadge}
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;font-size:11px;color:var(--txt2);">
+          <div><strong style="color:var(--txt);">Started:</strong> ${sub.startDateStr}</div>
+          <div><strong style="color:var(--txt);">${sub.autoRenew?'Renews:':'Expires:'}</strong> ${sub.endDateStr}</div>
+        </div>
+        ${daysBadge}
+        <div style="margin-top:10px;display:flex;gap:8px;">
+          ${sub.autoRenew ? `
+          <button onclick="managePlayStoreSubscription()" 
+                  style="flex:1;background:var(--surf2);border:1px solid var(--bdr);color:var(--txt);border-radius:9px;padding:7px;font-size:11px;font-weight:700;cursor:pointer;">
+            ⚙️ Manage / Cancel in Play Store
+          </button>` : ''}
+        </div>
+      </div>
+    `;
+  } else if (trial.isTrial && !trial.isLocked) {
+    container.innerHTML = `
+      <div style="background:linear-gradient(135deg,rgba(29,184,127,0.15),rgba(255,215,0,0.12));border:1.5px solid var(--acc);border-radius:16px;padding:14px;margin-bottom:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div style="font-size:15px;font-weight:800;color:var(--acc);">🎁 7-Day Free Trial Active</div>
+          <span style="background:var(--acc-dim);color:var(--acc-lt);border:1px solid var(--acc);font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;">Full Access</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px;font-size:11px;color:var(--txt2);">
+          <div><strong style="color:var(--txt);">Trial Start Date:</strong> ${trial.startDateStr}</div>
+          <div><strong style="color:var(--txt);">Trial End Date:</strong> ${trial.endDateStr}</div>
+        </div>
+        <div style="background:var(--acc-dim);border:1px solid var(--acc);color:var(--acc-lt);font-size:12px;font-weight:800;padding:6px 12px;border-radius:10px;margin-top:10px;text-align:center;">
+          ⏳ ${trial.daysLeft} Day${trial.daysLeft>1?'s':''} Remaining — Practice Unlocked Until ${trial.endDateStr}
+        </div>
+      </div>
+    `;
+  } else if (sub.isExpired) {
+    container.innerHTML = `
+      <div style="background:linear-gradient(135deg,#3A1000,#1A0A00);border:1.5px solid var(--danger);border-radius:16px;padding:14px;margin-bottom:14px;text-align:center;">
+        <div style="font-size:15px;font-weight:800;color:var(--danger);">⚠️ Subscription Expired</div>
+        <div style="font-size:12px;color:var(--txt2);margin-top:4px;">Your PRO plan expired on ${sub.endDateStr}. Renew today to continue your 108 Surya Namaskara streak!</div>
+      </div>
+    `;
+  } else {
+    container.innerHTML = "";
+  }
+}
+
+function checkSubscriptionReminder() {
+  const sub = getSubscriptionInfo();
+  const trial = getTrialInfo();
+  const banner = document.getElementById("sub-reminder-banner");
+  if(!banner) return;
+
+  // 1. Paid Subscription Expiring Soon (<= 2 days)
+  if (sub.active && sub.isExpiringSoon) {
+    banner.style.display = "block";
+    banner.innerHTML = `
+      <div onclick="showPaywallOverlay()" style="background:linear-gradient(135deg,#3A1000,#1A0A00);border:1.5px solid var(--danger);border-radius:12px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;">
+        <div>
+          <div style="font-size:12px;font-weight:800;color:var(--danger)">⏳ PRO Plan Expiring in ${sub.daysLeft} Day${sub.daysLeft>1?'s':''}!</div>
+          <div style="font-size:10px;color:var(--txt2)">Renew now to keep your 108 Surya Namaskara streak unbroken.</div>
+        </div>
+        <div style="background:var(--danger);color:#fff;font-size:10px;font-weight:800;padding:4px 10px;border-radius:8px;">Renew</div>
+      </div>
+    `;
+    return;
+  }
+
+  // 2. Paid Subscription Expired
+  if (sub.isExpired && data.subDate) {
+    banner.style.display = "block";
+    banner.innerHTML = `
+      <div onclick="showPaywallOverlay()" style="background:linear-gradient(135deg,#3A1000,#1A0A00);border:1.5px solid var(--danger);border-radius:12px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;">
+        <div>
+          <div style="font-size:12px;font-weight:800;color:var(--danger)">⚠️ Subscription Expired (${sub.endDateStr})</div>
+          <div style="font-size:10px;color:var(--txt2)">Re-activate PRO to unlock full voice guidance &amp; pranayama.</div>
+        </div>
+        <div style="background:var(--acc);color:#06231A;font-size:10px;font-weight:800;padding:4px 10px;border-radius:8px;">Re-activate</div>
+      </div>
+    `;
+    return;
+  }
+
+  // 3. Free Trial Expired (Lock active)
+  if (trial.isLocked) {
+    banner.style.display = "block";
+    banner.innerHTML = `
+      <div onclick="showPaywallOverlay()" style="background:linear-gradient(135deg,#3A1000,#1A0A00);border:1.5px solid var(--danger);border-radius:12px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;">
+        <div>
+          <div style="font-size:12px;font-weight:800;color:var(--danger)">🔒 7-Day Free Trial Expired!</div>
+          <div style="font-size:10px;color:var(--txt2)">Select a PRO Plan to unlock your daily 108 Surya Namaskara practice.</div>
+        </div>
+        <div style="background:var(--acc);color:#06231A;font-size:10px;font-weight:800;padding:4px 10px;border-radius:8px;">Unlock</div>
+      </div>
+    `;
+    return;
+  }
+
+  // 4. Free Trial Active
+  if (trial.isTrial && !trial.isLocked) {
+    banner.style.display = "block";
+    banner.innerHTML = `
+      <div onclick="showPaywallOverlay()" style="background:linear-gradient(135deg,rgba(255,215,0,0.15),rgba(29,184,127,0.15));border:1.5px solid var(--acc);border-radius:12px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;">
+        <div>
+          <div style="font-size:12px;font-weight:800;color:var(--acc-lt)">🎁 7-Day Free Trial Active (${trial.daysLeft} Day${trial.daysLeft>1?'s':''} Left)</div>
+          <div style="font-size:10px;color:var(--txt2)">Start: ${trial.startDateStr} · End: ${trial.endDateStr} · Full Access Unlocked</div>
+        </div>
+        <div style="background:var(--acc);color:#06231A;font-size:10px;font-weight:800;padding:4px 10px;border-radius:8px;">View Plans</div>
+      </div>
+    `;
+    return;
+  }
+
+  banner.style.display = "none";
+}
+
+function managePlayStoreSubscription() {
+  if(confirm("Opening Google Play Store Subscriptions...\n\nYou can view, manage, or cancel auto-renewal anytime in Google Play Store.")) {
+    window.open("https://play.google.com/store/account/subscriptions", "_blank");
+  }
+}
+
+function grantPremiumAccess(sku, response) {
+  data.isPremium = true;
+  data.subSku    = sku;
+  data.subDate   = new Date().toISOString();
+  saveAll();
+  hideAppLock();
+  render();
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CLASSICAL YOGA & AYURVEDIC PRANAYAMA STANDARDS
+   Based on Hatha Yoga Pradipika, Gheranda Samhita, & Shiva Samhita
+═══════════════════════════════════════════════════════════════ */
+const CLASSICAL_YOGA_AYURVEDA_STANDARDS = {
+  dirgha: {
+    title: "Dirgha Pranayama (Three-Part Deep Breathing)",
+    classicalText: "Patanjali Yoga Sutras (2.49-51) & Gheranda Samhita (5.46-52)",
+    method: "Sit comfortably with an erect spine. Inhale sequentially in three distinct stages: first fill the lower abdomen (belly), second expand the intercostal ribs, third lift the upper chest and collarbones. Exhale in exact reverse order: upper chest falls, ribs contract, belly draws inward toward the spine.",
+    ratios: {
+      beginner: "1 : 0 : 1 (4s Inhale, 4s Exhale — Equal Sama Vritti)",
+      intermediate: "1 : 0 : 2 (4s Inhale, 8s Exhale — Extended Visama Vritti)",
+      advanced: "1 : 1 : 2 (4s Inhale, 4s Antar Kumbhaka retention, 8s Exhale)"
+    },
+    roundsDuration: "6 – 10 rounds (2.5 – 5.0 minutes daily)",
+    postureMudraEye: "Padmasana (Lotus Pose), Siddhasana, or Sukhasana. Hands in Chin Mudra (thumb & index tip joining, palms up on knees). Eyes softly closed with internal awareness at Manipuraka (Navel) & Anahata (Heart) Chakras.",
+    timeFasting: "Best practiced during Brahma Muhurta (4:00 AM – 6:00 AM) or Sunset (Sandhya). Strictly on an empty stomach (minimum 3–4 hours after meals).",
+    physicalBenefits: "Increases vital lung capacity by up to 30%, mobilizes the diaphragm, strengthens intercostal muscles, optimizes arterial blood oxygenation, and aids venous blood return.",
+    mentalBenefits: "Activates the Parasympathetic Nervous System via Vagus nerve stimulation. Reduces cortisol, calms hyper-arousal, alleviates panic and anxiety, and brings immediate mental clarity.",
+    ayurvedicBenefits: {
+      vata: "Strongly pacifies Vata (Samana Vayu & Vyana Vayu) — grounds nervous energy.",
+      pitta: "Cools excess Sadhaka Pitta — reduces anger and emotional heat.",
+      kapha: "Expands chest region to prevent stagnant Kledaka Kapha accumulation.",
+      agni: "Balances Jatharagni (digestive fire) without creating harsh heat.",
+      prana: "Harmonizes Prana Vayu (chest intake) and Apana Vayu (elimination)."
+    },
+    chakraNadi: "Harmonizes Manipuraka (Solar Plexus) & Anahata (Heart) Chakras. Equalizes energy flow between Ida (Moon/Left) and Pingala (Sun/Right) Nadis.",
+    precautions: "Avoid forcing or straining the breath. Keep shoulders relaxed; do not hunch shoulders upward during inhalation. Caution during acute respiratory asthma flare-ups.",
+    progression: "Stage 1: Equal 4:4 breath (1 week) → Stage 2: Extended 4:8 exhale (2 weeks) → Stage 3: 4:4:8 ratio with gentle internal retention (Antar Kumbhaka)."
+  },
+
+  kapalabhati: {
+    title: "Kapalabhati (Skull-Shining Purification / Shatkarma)",
+    classicalText: "Hatha Yoga Pradipika (2.35–37) & Gheranda Samhita (1.55–58)",
+    method: "Sit tall with erect spine. Inhalation is passive, natural, and quiet. Exhalation is rapid, active, sharp, and forceful through both nostrils by contracting the lower abdominal muscles and snapping the navel inward toward the spine.",
+    ratios: {
+      beginner: "30 strokes per round at 1 stroke/sec (No retention)",
+      intermediate: "36–60 strokes per round at 1.2 strokes/sec followed by 10s Antar Kumbhaka",
+      advanced: "120 strokes per round followed by 30s Antar Kumbhaka with Jalandhara & Mula Bandhas"
+    },
+    roundsDuration: "3 – 5 rounds (36 strokes/round, total 4.5 minutes)",
+    postureMudraEye: "Siddhasana or Padmasana. Hands in Chin Mudra or Adi Mudra. Eyes closed with gaze turned inward at Bhrumadhya (Eyebrow Center — Ajna Chakra).",
+    timeFasting: "Early morning during Brahma Muhurta. Strictly on a completely empty stomach (minimum 4 hours post-meal).",
+    physicalBenefits: "Clears frontal cranial sinuses (*Kapala*), expels stale residual air and excess carbon dioxide, tones abdominal rectus muscles, and stimulates pancreatic secretion.",
+    mentalBenefits: "Dispels mental lethargy (*Tamas*), sharpens cognitive alertness, enhances focus, and induces a feeling of lightness and clarity in the skull.",
+    ayurvedicBenefits: {
+      vata: "Stimulates Samana Vayu; exercise moderation to avoid over-activating Vyana Vayu.",
+      pitta: "Increases internal body heat (Pitta) — practice gently in hot summer climates.",
+      kapha: "Strongly destroys excess Kapha (*Kapha Nashak*) and clears mucosal stagnation.",
+      agni: "Kindles intense Jatharagni (digestive fire) & Bhutagni (liver metabolic fire).",
+      prana: "Awakens Udana Vayu (upward energy) & Prana Vayu."
+    },
+    chakraNadi: "Purifies all 72,000 Nadis as described in Hatha Yoga Pradipika. Strongly stimulates Manipuraka (Solar Plexus) & Ajna (Third Eye) Chakras.",
+    precautions: "STRICT CONTRAINDICATIONS: High Blood Pressure, Heart Conditions, Hernia, Epilepsy, Glaucoma, Pregnancy, Recent Abdominal Surgery. Mistake: Hunching shoulders or facial grimacing during strokes.",
+    progression: "Stage 1: 20 strokes @ 1 stroke/sec → Stage 2: 36–60 strokes with 12s Kumbhaka → Stage 3: 120 strokes with Jalandhara and Mula Bandhas."
+  },
+
+  bhastrika: {
+    title: "Bhastrika (Bellows Breath)",
+    classicalText: "Hatha Yoga Pradipika (2.59–67) & Gheranda Samhita (5.75–77)",
+    method: "Mimic the action of a blacksmith's bellows. Inhale forcefully AND exhale forcefully through both nostrils with equal force and speed, expanding and contracting the abdomen. Conclude round with a deep inhalation, hold (Kumbhaka), and slow exhalation.",
+    ratios: {
+      beginner: "15 rapid equal breaths followed by 1 : 0 : 1 deep breath",
+      intermediate: "24 rapid breaths followed by 1 : 4 : 2 retention (4s in, 16s hold, 8s out)",
+      advanced: "50–100 rapid breaths followed by 1 : 4 : 2 : 1 Kumbhaka with Mahabandha (Mula + Uddiyana + Jalandhara)"
+    },
+    roundsDuration: "3 – 4 rounds (24 breaths/round, total 3.0 minutes)",
+    postureMudraEye: "Padmasana, Vajrasana, or Siddhasana. Hands in Jnana Mudra or loose fists at shoulder height. Eyes closed, internal awareness at Anahata (Heart) & Ajna Chakras.",
+    timeFasting: "Early morning at sunrise or cold weather. Strictly empty stomach (minimum 4 hours post-meal).",
+    physicalBenefits: "Heats the entire body, purifies bronchial airways, strengthens diaphragm and intercostals, boosts immune response, and accelerates cellular oxygen intake.",
+    mentalBenefits: "Removes Tamasic inertia and Rajasic agitation, bringing the mind into Sattvic tranquility, resilience, and vitality.",
+    ayurvedicBenefits: {
+      vata: "Balances Vata when practiced with proper internal retention.",
+      pitta: "Increases Pitta heat; balances Tridosha according to Hatha Yoga Pradipika 2.65.",
+      kapha: "Rapidly liquefies and expels thick Kapha phlegm.",
+      agni: "Maximizes Jatharagni and Dhatu Agni (tissue metabolism).",
+      prana: "Forces Prana into Sushumna Nadi, piercing the 3 Granthis."
+    },
+    chakraNadi: "Pierces Brahma Granthi (Root), Vishnu Granthi (Heart), & Rudra Granthi (Head). Directs Prana into central Sushumna Nadi.",
+    precautions: "CONTRAINDICATED in Severe Hypertension, Vertigo, Heart conditions, Gastric Ulcers, Pregnancy, Ear Infection. Mistake: Excessive throat friction or hyperventilation without control.",
+    progression: "Stage 1: 12 slow bellows breaths → Stage 2: 24 breaths with 15s hold → Stage 3: 50 breaths with Mahabandha."
+  },
+
+  anulom: {
+    title: "Anulom Vilom (Alternate Nostril Balance)",
+    classicalText: "Yoga Yajnavalkya (6.1–25) & Shiva Samhita (3.22–30)",
+    method: "Raise right hand in Nasagra / Vishnu Mudra. Close right nostril with thumb, inhale smoothly through left nostril. Close left nostril with ring finger, release right nostril and exhale smoothly. Inhale through right nostril, close right, exhale through left. Maintain continuous rhythm without breath retention.",
+    ratios: {
+      beginner: "1 : 0 : 1 (4s Inhale Left, 4s Exhale Right, 4s Inhale Right, 4s Exhale Left)",
+      intermediate: "1 : 0 : 2 (4s Inhale, 8s Exhale — Extended Exhalation)",
+      advanced: "1 : 0 : 2 (5s Inhale, 10s Exhale — Deep Slow Flow)"
+    },
+    roundsDuration: "10 – 15 rounds (6.0 minutes daily)",
+    postureMudraEye: "Padmasana or Siddhasana. Right hand in Nasagra / Vishnu Mudra, Left hand in Chin Mudra on left knee. Eyes closed, awareness at Bhrumadhya (Ajna Chakra).",
+    timeFasting: "Any time of day (ideal at dawn, noon, sunset). Empty stomach or minimum 2 hours after a light meal.",
+    physicalBenefits: "Synchronizes left and right brain hemisphere activity, balances sympathetic and parasympathetic nervous systems, and improves cardiovascular rhythm.",
+    mentalBenefits: "Alleviates anxiety, stress, emotional mood swings, and insomnia. Restores mental focus, patience, and inner equilibrium.",
+    ayurvedicBenefits: {
+      vata: "Pacifies Prana Vayu and Vyana Vayu — excellent for Vata disorders.",
+      pitta: "Cools excess Pitta and reduces vascular heat.",
+      kapha: "Regulates Kapha flow throughout the upper respiratory channels.",
+      agni: "Balances Samana Agni in the solar plexus.",
+      prana: "Equalizes Ida (Moon/Left/Cooling) & Pingala (Sun/Right/Heating) Nadis."
+    },
+    chakraNadi: "Purifies Ida & Pingala Nadis, establishing balance across Ajna (Third Eye) Chakra.",
+    precautions: "Avoid pressing nostrils too hard. Do not rush or force the airflow; breathing should be silent, smooth, and un-jerky.",
+    progression: "Stage 1: Equal 4:4 ratio → Stage 2: 4:8 ratio → Stage 3: Transition to Nadi Shodhana with Antar Kumbhaka."
+  },
+
+  nadi: {
+    title: "Nadi Shodhana (Channel Purification 1:4:2 Ratio)",
+    classicalText: "Hatha Yoga Pradipika (2.7–10) & Gheranda Samhita (5.38–45)",
+    method: "Classical alternate nostril breathing with internal breath retention (Antar Kumbhaka). Inhale left nostril (4s), retain breath with both nostrils closed (16s), exhale right nostril (8s). Inhale right (4s), retain (16s), exhale left (8s).",
+    ratios: {
+      beginner: "1 : 2 : 2 (4s Inhale, 8s Hold, 8s Exhale)",
+      intermediate: "1 : 4 : 2 (4s Inhale, 16s Antar Kumbhaka, 8s Exhale)",
+      advanced: "1 : 4 : 2 : 1 (4s Inhale, 16s Antar Kumbhaka, 8s Exhale, 4s Bahya Kumbhaka with Jalandhara & Mula Bandhas)"
+    },
+    roundsDuration: "5 – 10 rounds (5.0 minutes daily)",
+    postureMudraEye: "Siddhasana or Padmasana. Right hand in Vishnu Mudra, Left hand in Chin Mudra. Eyes closed, awareness focused on Sushumna Nadi & Ajna Chakra.",
+    timeFasting: "Dawn (Brahma Muhurta) & Sunset. Strictly on an empty stomach (minimum 4 hours post-meal).",
+    physicalBenefits: "Maximizes arterial oxygen saturation, enhances Heart Rate Variability (HRV), purifies respiratory pathways, and optimizes cellular metabolism.",
+    mentalBenefits: "Induces profound meditative quietude, clears subconscious impressions (*Samskaras*), and enhances deep cognitive intelligence.",
+    ayurvedicBenefits: {
+      vata: "Perfectly balances Vata (*Tridosha Samata*) as detailed in Gheranda Samhita 5.38.",
+      pitta: "Purifies Sadhaka & Ranjaka Pitta.",
+      kapha: "Clears Kledaka Kapha from subtle energy pathways.",
+      agni: "Establishes Samagni (perfect balanced metabolic fire).",
+      prana: "Directs Prana into central Sushumna Nadi."
+    },
+    chakraNadi: "Completely purifies all 72,000 Nadis (*Nadi Shuddhi*), unlocks Sushumna Nadi, and prepares for Kundalini awakening.",
+    precautions: "Never force breath retention (Kumbhaka). If feeling dizzy or breathless, immediately drop retention and return to equal breathing. Contraindicated in unmanaged severe hypertension.",
+    progression: "Stage 1: 4:8:8 ratio → Stage 2: Classical 4:16:8 ratio → Stage 3: 4:16:8:4 ratio with Jalandhara, Uddiyana, & Mula Bandhas (Maha Bandha)."
+  },
+
+  ujjayi: {
+    title: "Ujjayi Pranayama (Ocean / Psychic Breath)",
+    classicalText: "Hatha Yoga Pradipika (2.51–53) & Gheranda Samhita (5.69–72)",
+    method: "Slightly contract the glottis in the throat. Inhale and exhale through the nose, creating a soft, soothing, continuous ocean-wave or soft whispering sound in the throat (*Ajapa Japa*).",
+    ratios: {
+      beginner: "1 : 0 : 1 (4s Inhale with throat sound, 4s Exhale with throat sound)",
+      intermediate: "1 : 0 : 2 (5s Inhale, 10s Exhale)",
+      advanced: "1 : 4 : 2 (5s Inhale, 20s Antar Kumbhaka with Jalandhara Bandha, 10s Exhale)"
+    },
+    roundsDuration: "6 – 12 rounds (1.5 – 3.0 minutes)",
+    postureMudraEye: "Any comfortable meditative pose or during Asana practice. Chin Mudra or Khechari Mudra (tongue tip folded back against soft palate). Eyes closed, awareness at Vishuddhi (Throat) Chakra.",
+    timeFasting: "Any time of day. Safe on light stomach or empty stomach.",
+    physicalBenefits: "Lowers arterial blood pressure, regulates thyroid & parathyroid endocrine secretions, warms incoming air, and relieves bronchitis and asthma.",
+    mentalBenefits: "Relieves insomnia, nervous tension, and mental anxiety. Highly effective before sleep to quiet racing thoughts.",
+    ayurvedicBenefits: {
+      vata: "Calms Udana Vayu (throat & speech energy) and Vyana Vayu.",
+      pitta: "Cools internal heat when practiced without retention.",
+      kapha: "Removes excess Kapha phlegm from throat and lungs (*Hatha Yoga Pradipika 2.53*).",
+      agni: "Stabilizes Vishama Agni.",
+      prana: "Harmonizes Prana Vayu at the throat center."
+    },
+    chakraNadi: "Activates Vishuddhi (Throat) Chakra & Bindu Visarga; balances Ida & Pingala Nadis.",
+    precautions: "Do not over-constrict the throat causing harsh friction. Avoid strain if suffering from severe low blood pressure.",
+    progression: "Stage 1: Equal 4:4 ocean breath → Stage 2: Extended 5:10 exhale → Stage 3: Khechari Mudra + Jalandhara Bandha internal retention."
+  },
+
+  bhramari: {
+    title: "Bhramari (Humming Bee Breath)",
+    classicalText: "Hatha Yoga Pradipika (2.68) & Gheranda Samhita (5.78–82)",
+    method: "Inhale deeply through both nostrils. On exhalation, produce a smooth, continuous, low-pitched humming sound (*Mmmmm*) like a black bee. Apply Shanmukhi Mudra to close external senses.",
+    ratios: {
+      beginner: "1 : 0 : 2 (4s Inhale, 8s–10s Humming Exhale)",
+      intermediate: "1 : 0 : 3 (5s Inhale, 15s Humming Exhale)",
+      advanced: "1 : 2 : 3 (5s Inhale, 10s Antar Kumbhaka, 15s–20s Humming Exhale with Jalandhara Bandha)"
+    },
+    roundsDuration: "10 – 15 rounds (3.5 – 5.0 minutes)",
+    postureMudraEye: "Padmasana or Sukhasana. Shanmukhi Mudra (thumbs close ears, index fingers on eyelids, middle fingers on nostril sides, ring & little fingers above & below lips). Eyes closed, internal vibration focus.",
+    timeFasting: "Night before bedtime or Early Morning. Best on empty stomach.",
+    physicalBenefits: "Increases Nitric Oxide (NO) production in nasal airways 15-fold, dilating blood vessels, reducing blood pressure, and boosting mucosal immunity.",
+    mentalBenefits: "Provides immediate neural relaxation, alleviates anger, frustration, and insomnia, and induces deep Sattvic stillness.",
+    ayurvedicBenefits: {
+      vata: "Exceptionally pacifies Vata (Prana Vayu & Tarpaka Kapha) — premier anti-anxiety practice.",
+      pitta: "Cools Sadhaka Pitta, reducing mental anger and heat.",
+      kapha: "Soothes Kledaka Kapha.",
+      agni: "Harmonizes Pranic Agni.",
+      prana: "Directs Prana into the brain and cranial nerves."
+    },
+    chakraNadi: "Resonates Ajna (Third Eye) & Sahasrara (Crown) Chakras. Awakens internal subtle sound (*Nada Anusandhana*).",
+    precautions: "Do not press hard on eyeballs in Shanmukhi Mudra. Contraindicated in severe active ear infections.",
+    progression: "Stage 1: Simple humming exhale → Stage 2: Shanmukhi Mudra → Stage 3: Antar Kumbhaka + Nada Anusandhana meditation."
+  },
+
+  meditation: {
+    title: "Dhyana Meditation (Silent Awareness)",
+    classicalText: "Patanjali Yoga Sutras (3.2) & Shiva Samhita (5.160–185)",
+    method: "Maintain absolute stillness of body, breath, and mind. Observe the natural, un-forced breath as a silent witness (*Sakshi Bhava*), allowing pure awareness to rest in non-dual consciousness.",
+    ratios: {
+      beginner: "Natural un-controlled breath flow (100% effortless awareness)",
+      intermediate: "Natural breath observation with subtle So-Ham mantra resonance",
+      advanced: "Nirguna Dhyana — pure objectless absorption (*Samadhi*)"
+    },
+    roundsDuration: "1 continuous session (9.0 – 15.0 minutes)",
+    postureMudraEye: "Padmasana, Siddhasana, or Sukhasana with spine 100% erect. Dhyana Mudra (right palm resting over left palm in lap). Eyes softly closed, awareness at Ajna (Eyebrow Center) or Anahata (Heart Center).",
+    timeFasting: "Dawn (Brahma Muhurta) / Night before sleep. Empty stomach preferred.",
+    physicalBenefits: "Triggers maximum physiological recovery, normalizes cortisol & stress hormones, stabilizes EEG brainwave states (Alpha & Theta), and accelerates cellular repair.",
+    mentalBenefits: "Dissolves mental duality, cultivates unwavering concentration (*Ekagrata*), inner serenity, and unconditioned bliss (*Ananda*).",
+    ayurvedicBenefits: {
+      vata: "Rebuilds Ojas (vital essence), Tejas (radiance), & Prana.",
+      pitta: "Pacifies Sadhaka Pitta.",
+      kapha: "Harmonizes Tarpaka Kapha.",
+      agni: "Achieves Samagni (perfect metabolic equilibrium).",
+      prana: "Merges Prana into Sushumna Nadi."
+    },
+    chakraNadi: "Harmonizes all 7 Chakras; merges Prana into Sushumna Nadi leading toward Samadhi.",
+    precautions: "Avoid slouching the spine or falling into dull sleep (*Laya*). Maintain an alert yet completely relaxed witness attitude.",
+    progression: "Stage 1: Breath awareness (Anapanasati) → Stage 2: Mantra Japa → Stage 3: Pure Nirguna Meditation (Silent Witness)."
+  }
+};
+
+/* ── Diet & Hydration Plan Completion Locking System ────────── */
+function isDietPlanUnlocked() {
+  const done = todayDone(), goal = todayGoal();
+  const isGoalComplete = done >= goal && goal > 0;
+  const isPranaFinished = !!(data.pranaFinishedToday || pranaState.completedToday);
+  const isPranaClosed = !!data.pranaClosedToday;
+
+  if (isGoalComplete && isPranaFinished) return true;
+  if (isPranaClosed) return true;
+
+  return false;
+}
+
+function updateDietPlanButtonLockUI() {
+  const card = document.getElementById("card-view-diet-plan");
+  const infoHeader = document.getElementById("diet-card-info-header");
+  const pbarWrap = document.getElementById("diet-card-pbar-wrap");
+  const waterBtnRow = document.getElementById("diet-card-water-btn-row");
+  const waterBtn = document.getElementById("btn-quick-log-water");
+  const btn = document.getElementById("btn-view-diet-plan");
+  const unlocked = isDietPlanUnlocked();
+
+  if (card) card.style.display = "block";
+
+  if (unlocked) {
+    // Goal Complete -> Show full Ayurvedic Diet & Hydration window card with title, progress bar, & View Plan button!
+    if (infoHeader) infoHeader.style.display = "flex";
+    if (pbarWrap) pbarWrap.style.display = "block";
+    if (waterBtnRow) {
+      waterBtnRow.style.display = "flex";
+      waterBtnRow.style.justify = "flex-end";
+      waterBtnRow.style.width = "auto";
+    }
+    if (waterBtn) {
+      waterBtn.style.width = "auto";
+      waterBtn.style.padding = "6px 12px";
+      waterBtn.style.fontSize = "11px";
+    }
+    if (card) {
+      card.style.background = "linear-gradient(135deg,rgba(245,158,11,0.15),rgba(56,189,248,0.12))";
+      card.style.border = "1.2px solid var(--bdr)";
+      card.style.padding = "10px 12px";
+      card.style.cursor = "pointer";
+    }
+    if (btn) {
+      btn.textContent = "View Plan";
+      btn.style.background = "rgba(16, 185, 129, 0.18)";
+      btn.style.borderColor = "#10B981";
+      btn.style.color = "#34D399";
+      btn.style.cursor = "pointer";
+    }
+  } else {
+    // Before Goal Complete -> HIDE diet details, title, subtitle, progress bar, & View Plan button! ONLY show +1 Drink Water button!
+    if (infoHeader) infoHeader.style.display = "none";
+    if (pbarWrap) pbarWrap.style.display = "none";
+    if (waterBtnRow) {
+      waterBtnRow.style.display = "flex";
+      waterBtnRow.style.justify = "center";
+      waterBtnRow.style.width = "100%";
+    }
+    if (waterBtn) {
+      waterBtn.style.width = "100%";
+      waterBtn.style.justifyContent = "center";
+      waterBtn.style.padding = "10px 16px";
+      waterBtn.style.fontSize = "13px";
+    }
+    if (card) {
+      card.style.background = "transparent";
+      card.style.border = "none";
+      card.style.padding = "0px";
+      card.style.cursor = "default";
+    }
+  }
+}
+
+function handleDietPlanClick(e) {
+  if (e) e.stopPropagation();
+
+  if (!isDietPlanUnlocked()) {
+    vib(30);
+    const lang = cfg.pranaLang || "en";
+    const msg = lang === "hi"
+      ? "🔒 आज का आयुर्वेदिक आहार और जल योजना सूर्य नमस्कार लक्ष्य और प्राणायाम पूरा करने (या बंद करने पर) अनलॉक होगी!"
+      : lang === "mr"
+      ? "🔒 आजची आयुर्वेदिक आहार आणि पाणी योजना सूर्य नमस्कार ध्येय आणि प्राणायाम पूर्ण झाल्यावर (किंवा बंद केल्यावर) अनलॉक होईल!"
+      : "🔒 Today's Ayurvedic Diet & Hydration Plan unlocks after completing today's Surya Namaskara target & Pranayama routine (or closing Pranayama)!";
+    alert(msg);
+    return;
+  }
+
+  showDietModal();
+}
+window.handleDietPlanClick = handleDietPlanClick;
+window.isDietPlanUnlocked = isDietPlanUnlocked;
+
+let _pranaPausedForGuide = false;
+
+function pausePranaForGuideSpeech() {
+  if (pranaState.active && !pranaState.paused) {
+    _pranaPausedForGuide = true;
+    clearPranaTimers();
+    const badgeEl = document.getElementById("prana-live-badge");
+    if (badgeEl) badgeEl.innerHTML = "📖 Guide Speaking — Round Paused";
+  }
+}
+
+function resumePranaFromGuideSpeech() {
+  if (_pranaPausedForGuide) {
+    _pranaPausedForGuide = false;
+    if (pranaState.active && !pranaState.paused) {
+      startPranaStep();
+      startPranaClocks();
+    }
+  }
+}
+
+let _guideSpeechActive = false;
+
+function updatePranaGuideLockButton(isLocked) {
+  const btn = document.getElementById("btn-prana-guide");
+  const lockIcon = document.getElementById("prana-guide-lock-icon");
+  if (btn) {
+    btn.disabled = isLocked;
+    btn.style.opacity = isLocked ? "0.5" : "1";
+    btn.style.cursor = isLocked ? "not-allowed" : "pointer";
+  }
+  if (lockIcon) {
+    lockIcon.textContent = isLocked ? "🔒" : "🔓";
+  }
+}
+
+function handlePranaGuideClick() {
+  const btn = document.getElementById("btn-prana-guide");
+  if (btn && btn.disabled) {
+    vib(30);
+    const lang = cfg.pranaLang || "en";
+    const msg = lang === "hi"
+      ? "🔒 सक्रिय राउंड गिनती के दौरान शास्त्रीय गाइड लॉक है। विराम लें या गाइड देखने के लिए राउंड पूरा होने की प्रतीक्षा करें!"
+      : lang === "mr"
+      ? "🔒 ॲक्टिव्ह फेरी मोजणीदरम्यान क्लासिकल मार्गदर्शक लॉक आहे. विराम घ्या किंवा मार्गदर्शक पाहण्यासाठी फेरी पूर्ण होण्याची वाट पाहा!"
+      : "🔒 Classical Guide is locked during active round counting. Pause or wait for the round to complete to view!";
+    alert(msg);
+    return;
+  }
+  showPranaGuideModal();
+}
+
+function speakClassicalGuideText(data) {
+  if (voiceMuted || !window.speechSynthesis) return;
+  const lang = cfg.pranaLang || "en";
+
+  try {
+    try { window.speechSynthesis.cancel(); } catch(e){}
+
+    const targetData = data || (CLASSICAL_YOGA_AYURVEDA_STANDARDS[PRANAYAMA_BASE[pranaState.phaseIdx]?.id] || CLASSICAL_YOGA_AYURVEDA_STANDARDS.dirgha);
+
+    const fullText = `${targetData.title}. Classical Text References: ${targetData.classicalText}. 1. Step-by-Step Practice Method: ${targetData.method}. 2. Inhale, Hold, Exhale Ratios: Beginner: ${targetData.ratios.beginner}. Intermediate: ${targetData.ratios.intermediate}. Advanced: ${targetData.ratios.advanced}. 3. Recommended Duration: ${targetData.roundsDuration}. 4. Body Posture and Mudra: ${targetData.postureMudraEye}. 5. Best Time and Empty Stomach: ${targetData.timeFasting}. 6. Physical Health Benefits: ${targetData.physicalBenefits}. 7. Mental and Emotional Benefits: ${targetData.mentalBenefits}. 8. Ayurvedic Benefits: Vata: ${targetData.ayurvedicBenefits.vata}. Pitta: ${targetData.ayurvedicBenefits.pitta}. Kapha: ${targetData.ayurvedicBenefits.kapha}. Agni: ${targetData.ayurvedicBenefits.agni}. Prana: ${targetData.ayurvedicBenefits.prana}. 9. Chakra and Nadi Effects: ${targetData.chakraNadi}. 10. Precautions and Contraindications: ${targetData.precautions}. 11. Progression Guidelines: ${targetData.progression}.`;
+
+    const u = new SpeechSynthesisUtterance(fullText);
+    const vList = window.speechSynthesis.getVoices ? window.speechSynthesis.getVoices() : [];
+
+    u.rate = 1.0;
+
+    if (lang === "hi") {
+      u.lang = "hi-IN";
+      const hv = vList.find(v => v.lang === "hi-IN" && v.localService) ||
+                 vList.find(v => v.lang === "hi-IN") ||
+                 vList.find(v => v.lang.startsWith("hi")) || null;
+      if (hv) u.voice = hv;
+    } else if (lang === "mr") {
+      u.lang = "hi-IN";
+      const hv = vList.find(v => v.lang === "hi-IN") || null;
+      if (hv) u.voice = hv;
+    } else {
+      u.lang = "en-IN";
+      const ev = vList.find(v => v.lang === "en-IN") || vList.find(v => v.lang.startsWith("en")) || null;
+      if (ev) u.voice = ev;
+    }
+
+    u.onstart = () => {
+      _guideSpeechActive = true;
+      updateGuideVoiceBtnUI(true);
+      pausePranaForGuideSpeech();
+    };
+    u.onend = () => {
+      _guideSpeechActive = false;
+      updateGuideVoiceBtnUI(false);
+      resumePranaFromGuideSpeech();
+    };
+    u.onerror = () => {
+      _guideSpeechActive = false;
+      updateGuideVoiceBtnUI(false);
+      resumePranaFromGuideSpeech();
+    };
+
+    window.speechSynthesis.speak(u);
+  } catch (e) {
+    console.warn("Guide speech error:", e);
+  }
+}
+
+function toggleGuideVoice() {
+  if (_guideSpeechActive) {
+    stopClassicalGuideSpeech();
+  } else {
+    const targetId = PRANAYAMA_BASE[pranaState.phaseIdx] ? PRANAYAMA_BASE[pranaState.phaseIdx].id : "dirgha";
+    const data = CLASSICAL_YOGA_AYURVEDA_STANDARDS[targetId] || CLASSICAL_YOGA_AYURVEDA_STANDARDS.dirgha;
+    speakClassicalGuideText(data);
+  }
+}
+
+function stopClassicalGuideSpeech() {
+  _guideSpeechActive = false;
+  if (window.speechSynthesis) {
+    try { window.speechSynthesis.cancel(); } catch (e) {}
+  }
+  updateGuideVoiceBtnUI(false);
+  resumePranaFromGuideSpeech();
+}
+
+function updateGuideVoiceBtnUI(isPlaying) {
+  const btn = document.getElementById("guide-voice-btn");
+  if (btn) {
+    btn.innerHTML = isPlaying ? "⏹ Stop Voice" : "🔊 Listen Voice";
+    btn.style.background = isPlaying ? "rgba(255,59,48,0.25)" : "var(--acc-dim)";
+    btn.style.borderColor = isPlaying ? "var(--danger)" : "var(--acc)";
+    btn.style.color = isPlaying ? "var(--danger)" : "var(--acc-lt)";
+  }
+}
+
+function switchGuideTab(targetId) {
+  stopClassicalGuideSpeech();
+  showPranaGuideModal(targetId);
+}
+
+function showPranaGuideModal(phaseId) {
+  const targetId = phaseId || (PRANAYAMA_BASE[pranaState.phaseIdx] ? PRANAYAMA_BASE[pranaState.phaseIdx].id : "dirgha");
+  const data = CLASSICAL_YOGA_AYURVEDA_STANDARDS[targetId] || CLASSICAL_YOGA_AYURVEDA_STANDARDS.dirgha;
+
+  const titleEl = document.getElementById("guide-modal-title");
+  const contentEl = document.getElementById("guide-modal-content");
+
+  const tabs = [
+    { id: "dirgha", label: "1. Dirgha" },
+    { id: "kapalabhati", label: "2. Kapalabhati" },
+    { id: "bhastrika", label: "3. Bhastrika" },
+    { id: "anulom", label: "4. Anulom Vilom" },
+    { id: "nadi", label: "5. Nadi Shodhana" },
+    { id: "ujjayi", label: "6. Ujjayi" },
+    { id: "bhramari", label: "7. Bhramari" },
+    { id: "meditation", label: "8. Dhyana" }
+  ];
+
+  const tabHtml = `
+    <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:8px;margin-bottom:10px;border-bottom:1px solid var(--bdr);scrollbar-width:none;-webkit-overflow-scrolling:touch;">
+      ${tabs.map(t => `
+        <button onclick="switchGuideTab('${t.id}')" style="background:${t.id === targetId ? 'var(--acc-dim)' : 'var(--surf2)'};border:1px solid ${t.id === targetId ? 'var(--acc)' : 'var(--bdr)'};color:${t.id === targetId ? 'var(--acc-lt)' : 'var(--txt2)'};font-size:10px;font-weight:800;padding:5px 10px;border-radius:10px;cursor:pointer;white-space:nowrap;transition:all .2s ease">
+          ${t.label}
+        </button>
+      `).join('')}
+    </div>
+  `;
+
+  if (titleEl) titleEl.textContent = "📜 " + data.title;
+  if (contentEl) {
+    contentEl.innerHTML = tabHtml + `
+      <div style="background:var(--surf2);border:1px solid var(--acc-dim);border-radius:12px;padding:10px 12px;">
+        <div style="font-size:10px;font-weight:800;color:var(--acc-lt);text-transform:uppercase;">Classical Text References</div>
+        <div style="font-size:12px;font-weight:700;color:var(--txt);margin-top:2px;">${data.classicalText}</div>
+      </div>
+
+      <div>
+        <div style="font-size:11px;font-weight:800;color:var(--acc);margin-bottom:2px;">1. 🧘 Step-by-Step Practice Method</div>
+        <div style="color:var(--txt2);">${data.method}</div>
+      </div>
+
+      <div>
+        <div style="font-size:11px;font-weight:800;color:var(--acc);margin-bottom:2px;">2. ⏱ Inhale : Hold : Exhale Ratios</div>
+        <div style="display:grid;gap:4px;color:var(--txt2);">
+          <div>🟢 <strong>Beginner:</strong> ${data.ratios.beginner}</div>
+          <div>🟡 <strong>Intermediate:</strong> ${data.ratios.intermediate}</div>
+          <div>🔴 <strong>Advanced:</strong> ${data.ratios.advanced}</div>
+        </div>
+      </div>
+
+      <div>
+        <div style="font-size:11px;font-weight:800;color:var(--acc);margin-bottom:2px;">3. 🎯 Rounds &amp; Recommended Duration</div>
+        <div style="color:var(--txt2);">${data.roundsDuration}</div>
+      </div>
+
+      <div>
+        <div style="font-size:11px;font-weight:800;color:var(--acc);margin-bottom:2px;">4. 🪑 Posture, Hand Mudra &amp; Eye Position</div>
+        <div style="color:var(--txt2);">${data.postureMudraEye}</div>
+      </div>
+
+      <div>
+        <div style="font-size:11px;font-weight:800;color:var(--acc);margin-bottom:2px;">5. 🌅 Best Time &amp; Empty Stomach Requirements</div>
+        <div style="color:var(--txt2);">${data.timeFasting}</div>
+      </div>
+
+      <div>
+        <div style="font-size:11px;font-weight:800;color:var(--acc);margin-bottom:2px;">6. 💪 Physical Health Benefits</div>
+        <div style="color:var(--txt2);">${data.physicalBenefits}</div>
+      </div>
+
+      <div>
+        <div style="font-size:11px;font-weight:800;color:var(--acc);margin-bottom:2px;">7. 🧠 Mental &amp; Emotional Benefits</div>
+        <div style="color:var(--txt2);">${data.mentalBenefits}</div>
+      </div>
+
+      <div style="background:linear-gradient(135deg,rgba(29,184,127,0.1),rgba(15,80,55,0.2));border:1px solid var(--acc-dim);border-radius:12px;padding:10px 12px;">
+        <div style="font-size:11px;font-weight:800;color:var(--acc-lt);margin-bottom:6px;">8. 🌿 Ayurvedic Benefits (Vata, Pitta, Kapha, Agni, Prana)</div>
+        <div style="display:grid;gap:4px;color:var(--txt2);">
+          <div>💨 <strong>Vata:</strong> ${data.ayurvedicBenefits.vata}</div>
+          <div>🔥 <strong>Pitta:</strong> ${data.ayurvedicBenefits.pitta}</div>
+          <div>🌊 <strong>Kapha:</strong> ${data.ayurvedicBenefits.kapha}</div>
+          <div>⚡ <strong>Agni:</strong> ${data.ayurvedicBenefits.agni}</div>
+          <div>🫁 <strong>Prana:</strong> ${data.ayurvedicBenefits.prana}</div>
+        </div>
+      </div>
+
+      <div>
+        <div style="font-size:11px;font-weight:800;color:var(--acc);margin-bottom:2px;">9. 🧘‍♂️ Chakra &amp; Nadi Effects</div>
+        <div style="color:var(--txt2);">${data.chakraNadi}</div>
+      </div>
+
+      <div style="background:rgba(255,59,48,0.1);border:1px solid rgba(255,59,48,0.3);border-radius:12px;padding:10px 12px;">
+        <div style="font-size:11px;font-weight:800;color:var(--danger);margin-bottom:2px;">10. ⚠️ Precautions, Contraindications &amp; Mistakes</div>
+        <div style="color:var(--txt2);">${data.precautions}</div>
+      </div>
+
+      <div>
+        <div style="font-size:11px;font-weight:800;color:var(--acc);margin-bottom:2px;">11. 📈 Progression Guidelines (Beginner → Advanced)</div>
+        <div style="color:var(--txt2);">${data.progression}</div>
+      </div>
+    `;
+  }
+
+  const modal = document.getElementById("prana-guide-modal");
+  if (modal) modal.classList.add("show");
+
+  // Automatically start reading guide text out loud for selected practice
+  speakClassicalGuideText(data);
+}
+
+function closePranaGuideModal() {
+  stopClassicalGuideSpeech();
+  const modal = document.getElementById("prana-guide-modal");
+  if (modal) modal.classList.remove("show");
+  resumePranaFromGuideSpeech();
+}
+
+/* ── Init ────────────────────────────────────────────────────── */
+loadAll();
+initAuth();
+checkMidnightRollover(); // Rollover immediately if launched on a new day
+saveAll();
+render();
+updateWaterTrackerUI();
+updateDietPlanButtonLockUI();
+updateClockDisplay();
+scheduleMidnightRollover(); // schedule goal unlock at 12:00 AM Midnight
+scheduleAlarm();            // schedule 5 AM alarm
+checkMorningGreeting();     // greet if user opens app near alarm time
+scheduleAyurvedicDietNotifications(); // schedule Ayurvedic diet notifications
+scheduleWaterIntakeReminders(); // schedule 2-hourly water hydration reminders
+checkSubscriptionReminder();
+checkAppLockState();
+
+/* ── SW Lockscreen Notification Click Handler ────────────────── */
+if (typeof navigator !== "undefined" && navigator.serviceWorker) {
+  navigator.serviceWorker.addEventListener("message", e => {
+    if (e.data && e.data.type === "NOTIFICATION_CLICK") {
+      if (e.data.action === "log_water") {
+        quickLogWaterAndSpeak();
+      } else {
+        showDietModal("water", "water");
+      }
+    }
+  });
+}
+
+try {
+  const urlParams = new URLSearchParams(window.location.search);
+  const actionParam = urlParams.get("notif_action");
+  if (actionParam === "log_water") {
+    setTimeout(() => quickLogWaterAndSpeak(), 800);
+  } else if (actionParam === "water" || actionParam === "view_diet") {
+    setTimeout(() => showDietModal("water", "water"), 800);
+  }
+} catch (e) {}
+
+/* ═══════════════════════════════════════════════════════════════
+   30-SECOND WHATSAPP STATUS HIGHLIGHT RECORDING & SHARING ENGINE
+   ═══════════════════════════════════════════════════════════════ */
+let statusMediaRecorder = null;
+let statusRecordedChunks = [];
+let statusRecordTimer = null;
+let statusRecordSeconds = 0;
+let statusRecordedBlob = null;
+
+async function startStatusRecording() {
+  try {
+    statusRecordedChunks = [];
+    statusRecordedBlob = null;
+
+    let stream;
+    // 1. Capture screen & app audio (prompts Android system recording dialog)
+    if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
+      stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { displaySurface: 'browser', width: { max: 1080 }, height: { max: 1920 } },
+        audio: true
+      });
+    } else {
+      alert("Screen recording API is not supported in this browser. Please open in Google Chrome on Android.");
+      return;
+    }
+
+    const mimeTypes = ['video/webm;codecs=vp9,opus', 'video/webm', 'video/mp4'];
+    let selectedMime = mimeTypes.find(m => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
+    
+    statusMediaRecorder = new MediaRecorder(stream, selectedMime ? { mimeType: selectedMime } : {});
+
+    statusMediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) statusRecordedChunks.push(e.data);
+    };
+
+    statusMediaRecorder.onstop = () => {
+      statusRecordedBlob = new Blob(statusRecordedChunks, { type: selectedMime || 'video/webm' });
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      showStatusVideoModal();
+    };
+
+    statusMediaRecorder.start(1000);
+    statusRecordSeconds = 0;
+    updateStatusRecordBtnUI(true);
+
+    statusRecordTimer = setInterval(() => {
+      statusRecordSeconds++;
+      updateStatusRecordBtnUI(true);
+      if (statusRecordSeconds >= 30) {
+        stopStatusRecording();
+      }
+    }, 1000);
+
+  } catch (err) {
+    if (err.name !== "AbortError") {
+      console.warn("Screen recording cancelled or failed:", err);
+    }
+    updateStatusRecordBtnUI(false);
+  }
+}
+
+function stopStatusRecording() {
+  if (statusRecordTimer) { clearInterval(statusRecordTimer); statusRecordTimer = null; }
+  if (statusMediaRecorder && statusMediaRecorder.state !== 'inactive') {
+    statusMediaRecorder.stop();
+  }
+  updateStatusRecordBtnUI(false);
+}
+
+function toggleStatusRecording() {
+  if (statusMediaRecorder && statusMediaRecorder.state === 'recording') {
+    stopStatusRecording();
+  } else {
+    startStatusRecording();
+  }
+}
+
+function updateStatusRecordBtnUI(isRecording) {
+  const lbl = document.getElementById("rec-status-lbl");
+  const dot = document.getElementById("rec-dot");
+  if (!lbl || !dot) return;
+
+  if (isRecording) {
+    dot.style.background = "#EF4444";
+    dot.style.animation = "pulse 1s infinite";
+    lbl.textContent = `🔴 Recording 30s Status: ${statusRecordSeconds}s / 30s (Tap to stop)`;
+  } else {
+    dot.style.background = "#EF4444";
+    dot.style.animation = "none";
+    lbl.textContent = "🎥 Record 30s WhatsApp Status Clip";
+  }
+}
+
+function showStatusVideoModal() {
+  if (!statusRecordedBlob) return;
+  const vid = document.getElementById("status-video-preview");
+  if (vid) {
+    vid.src = URL.createObjectURL(statusRecordedBlob);
+  }
+  const modal = document.getElementById("status-video-modal");
+  if (modal) {
+    modal.style.display = "flex";
+    modal.classList.add("show");
+  }
+}
+
+function closeStatusVideoModal() {
+  const modal = document.getElementById("status-video-modal");
+  if (modal) {
+    modal.style.display = "none";
+    modal.classList.remove("show");
+  }
+  const vid = document.getElementById("status-video-preview");
+  if (vid) { vid.pause(); vid.src = ""; }
+}
+
+async function shareStatusVideoToWhatsApp() {
+  if (!statusRecordedBlob) return;
+
+  const ext = statusRecordedBlob.type.includes("mp4") ? "mp4" : "webm";
+  const file = new File([statusRecordedBlob], `surya_namaskara_30s_status.${ext}`, { type: statusRecordedBlob.type });
+
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({
+        files: [file],
+        title: "Surya Namaskara 30s Status Clip",
+        text: "Completed my Surya Namaskara session! ☀️🧘 #SuryaNamaskara #SuryaSarathi"
+      });
+      return;
+    } catch (e) {
+      if (e.name !== 'AbortError') console.error("Share failed:", e);
+    }
+  }
+  
+  downloadStatusVideo();
+  alert("Video downloaded! You can now attach it directly to your WhatsApp Status.");
+}
+
+function downloadStatusVideo() {
+  if (!statusRecordedBlob) return;
+  const ext = statusRecordedBlob.type.includes("mp4") ? "mp4" : "webm";
+  const url = URL.createObjectURL(statusRecordedBlob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `SuryaNamaskara_30s_Status_${Date.now()}.${ext}`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+window.toggleStatusRecording = toggleStatusRecording;
+window.closeStatusVideoModal = closeStatusVideoModal;
+window.shareStatusVideoToWhatsApp = shareStatusVideoToWhatsApp;
+window.downloadStatusVideo = downloadStatusVideo;
+
+/* ═══════════════════════════════════════════════════════════════
+   20-SECOND WORKOUT REEL ENGINE (Loaded from reel-generator.js)
+═══════════════════════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════════════════════
+   MULTI-USER AUTH & SQLITE SYNC ENGINE (Dedicated Port 8088)
+   Guarantees strict per-user privacy & admin data portal
+═══════════════════════════════════════════════════════════════ */
+let currentUser = null;
+let authToken = localStorage.getItem("surya_auth_token") || "";
+
+function getApiBase() {
+  if (window.location.origin && window.location.origin.startsWith("http")) {
+    return window.location.origin;
+  }
+  return "http://localhost:8088";
+}
+
+async function initAuth() {
+  const savedUser = localStorage.getItem("surya_current_user");
+  authToken = localStorage.getItem("surya_auth_token") || "";
+  if (savedUser && authToken) {
+    try {
+      currentUser = JSON.parse(savedUser);
+      updateUserBadgeUI();
+      fetch(`${getApiBase()}/api/auth/me`, {
+        headers: { "Authorization": `Bearer ${authToken}` }
+      })
+      .then(r => r.json())
+      .then(res => {
+        if (res.success && res.user) {
+          currentUser = res.user;
+          localStorage.setItem("surya_current_user", JSON.stringify(currentUser));
+          updateUserBadgeUI();
+          syncFromSQLite();
+        } else {
+          promptAuthModal();
+        }
+      })
+      .catch(err => {
+        console.log("[Auth] Server offline, running with cached user:", currentUser.username);
+        updateUserBadgeUI();
+      });
+      return;
+    } catch(e) {
+      console.warn("Error parsing saved user:", e);
+    }
+  }
+  promptAuthModal();
+}
+
+function promptAuthModal() {
+  const modal = document.getElementById("auth-modal");
+  if (modal) {
+    modal.style.display = "flex";
+    modal.classList.add("show");
+  }
+}
+
+function closeAuthModal() {
+  const modal = document.getElementById("auth-modal");
+  if (modal) {
+    modal.style.display = "none";
+    modal.classList.remove("show");
+  }
+}
+
+async function handleRegister(e) {
+  if (e) e.preventDefault();
+  const nameEl = document.getElementById("auth-reg-name");
+  const userEl = document.getElementById("auth-reg-username");
+  const passEl = document.getElementById("auth-reg-password");
+  const errEl = document.getElementById("auth-error-msg");
+
+  const name = nameEl ? nameEl.value.trim() : "";
+  const username = userEl ? userEl.value.trim().toLowerCase() : "";
+  const password = passEl ? passEl.value.trim() : "";
+
+  if (!username || !password) {
+    if (errEl) { errEl.textContent = "Please enter username and password."; errEl.style.display = "block"; }
+    return;
+  }
+
+  try {
+    const res = await fetch(`${getApiBase()}/api/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password, name })
+    });
+    const dataRes = await res.json();
+    if (dataRes.success && dataRes.token) {
+      authToken = dataRes.token;
+      currentUser = dataRes.user;
+      localStorage.setItem("surya_auth_token", authToken);
+      localStorage.setItem("surya_current_user", JSON.stringify(currentUser));
+      if (errEl) errEl.style.display = "none";
+      closeAuthModal();
+      updateUserBadgeUI();
+      syncToSQLite();
+      setStatus(`Welcome, ${currentUser.name}! 🙏`);
+    } else {
+      if (errEl) { errEl.textContent = dataRes.error || "Registration failed"; errEl.style.display = "block"; }
+    }
+  } catch (err) {
+    currentUser = { id: Date.now(), username: username, name: name || username, role: "user" };
+    authToken = "offline_token_" + Date.now();
+    localStorage.setItem("surya_auth_token", authToken);
+    localStorage.setItem("surya_current_user", JSON.stringify(currentUser));
+    closeAuthModal();
+    updateUserBadgeUI();
+    setStatus(`Welcome, ${currentUser.name}! (Offline mode)`);
+  }
+}
+
+async function handleLogin(e) {
+  if (e) e.preventDefault();
+  const userEl = document.getElementById("auth-login-username");
+  const passEl = document.getElementById("auth-login-password");
+  const errEl = document.getElementById("auth-error-msg");
+
+  const username = userEl ? userEl.value.trim().toLowerCase() : "";
+  const password = passEl ? passEl.value.trim() : "";
+
+  if (!username || !password) {
+    if (errEl) { errEl.textContent = "Please enter username and password."; errEl.style.display = "block"; }
+    return;
+  }
+
+  try {
+    const res = await fetch(`${getApiBase()}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password })
+    });
+    const dataRes = await res.json();
+    if (dataRes.success && dataRes.token) {
+      authToken = dataRes.token;
+      currentUser = dataRes.user;
+      localStorage.setItem("surya_auth_token", authToken);
+      localStorage.setItem("surya_current_user", JSON.stringify(currentUser));
+      if (errEl) errEl.style.display = "none";
+      closeAuthModal();
+      updateUserBadgeUI();
+      await syncFromSQLite();
+      setStatus(`Welcome back, ${currentUser.name}! 🙏`);
+    } else {
+      if (errEl) { errEl.textContent = dataRes.error || "Invalid username or password"; errEl.style.display = "block"; }
+    }
+  } catch (err) {
+    if (errEl) { errEl.textContent = "Server unreachable. Please check connection."; errEl.style.display = "block"; }
+  }
+}
+
+async function logoutUser() {
+  try {
+    if (authToken) {
+      await fetch(`${getApiBase()}/api/auth/logout`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${authToken}` }
+      });
+    }
+  } catch(e){}
+  authToken = "";
+  currentUser = null;
+  localStorage.removeItem("surya_auth_token");
+  localStorage.removeItem("surya_current_user");
+  updateUserBadgeUI();
+  promptAuthModal();
+}
+
+function updateUserBadgeUI() {
+  window.currentUser = currentUser;
+  const badge = document.getElementById("header-user-badge");
+  if (badge) {
+    if (currentUser) {
+      badge.textContent = `👤 ${currentUser.name}`;
+      badge.style.display = "inline-flex";
+    } else {
+      badge.style.display = "none";
+    }
+  }
+}
+
+async function syncToSQLite() {
+  if (!authToken || !currentUser) return;
+  try {
+    await fetch(`${getApiBase()}/api/data`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${authToken}`
+      },
+      body: JSON.stringify({ cfg, data })
+    });
+  } catch(e) {}
+}
+
+async function syncFromSQLite() {
+  if (!authToken || !currentUser) return;
+  try {
+    const res = await fetch(`${getApiBase()}/api/data`, {
+      headers: { "Authorization": `Bearer ${authToken}` }
+    });
+    const jsonRes = await res.json();
+    if (jsonRes.success && jsonRes.data) {
+      if (jsonRes.cfg) {
+        Object.assign(cfg, jsonRes.cfg);
+        if (typeof applyTheme === "function") applyTheme(cfg.theme || "system");
+      }
+      if (jsonRes.data.history) {
+        Object.keys(jsonRes.data.history).forEach(dKey => {
+          const remoteRec = jsonRes.data.history[dKey];
+          if (!data.history[dKey]) {
+            data.history[dKey] = remoteRec;
+          } else {
+            data.history[dKey].sets = Math.max(data.history[dKey].sets || 0, remoteRec.sets || 0);
+            data.history[dKey].timeMs = Math.max(data.history[dKey].timeMs || 0, remoteRec.timeMs || 0);
+          }
+        });
+      }
+      if (jsonRes.data.waterLogs) {
+        Object.assign(data.waterLogs, jsonRes.data.waterLogs);
+      }
+      data.totalAllTime = Math.max(data.totalAllTime || 0, jsonRes.data.totalAllTime || 0);
+      data.totalTimeMs = Math.max(data.totalTimeMs || 0, jsonRes.data.totalTimeMs || 0);
+      render();
+      renderBars();
+    }
+  } catch(e) {
+    console.log("[Sync] Offline, using local data");
+  }
+}
+
+async function openAdminPortal() {
+  if (!currentUser || currentUser.role !== "admin") {
+    alert("Access restricted: Admin login required.");
+    return;
+  }
+  const modal = document.getElementById("admin-dashboard-modal");
+  if (!modal) return;
+  modal.style.display = "flex";
+  modal.classList.add("show");
+
+  try {
+    const [usersRes, statsRes] = await Promise.all([
+      fetch(`${getApiBase()}/api/admin/users`, { headers: { "Authorization": `Bearer ${authToken}` } }).then(r => r.json()),
+      fetch(`${getApiBase()}/api/admin/stats`, { headers: { "Authorization": `Bearer ${authToken}` } }).then(r => r.json())
+    ]);
+
+    if (statsRes.success && statsRes.stats) {
+      const s = statsRes.stats;
+      const sUsers = document.getElementById("admin-stat-users"); if (sUsers) sUsers.textContent = s.total_users;
+      const sSets = document.getElementById("admin-stat-sets"); if (sSets) sSets.textContent = s.total_sets_across_all_users;
+      const sLogs = document.getElementById("admin-stat-logs"); if (sLogs) sLogs.textContent = s.total_workout_records;
+    }
+
+    if (usersRes.success && usersRes.users) {
+      const listEl = document.getElementById("admin-users-table-body");
+      if (listEl) {
+        listEl.innerHTML = usersRes.users.map(u => `
+          <tr style="border-bottom:1px solid rgba(96,165,250,0.15);font-size:12px">
+            <td style="padding:8px 6px;font-weight:700;color:#F9FAFB">${u.name} <br/><span style="font-size:10px;color:#93C5FD">@${u.username}</span></td>
+            <td style="padding:8px 6px;text-align:center"><span style="background:${u.role==='admin'?'#F59E0B':'#38BDF8'};color:#000;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:900">${u.role.toUpperCase()}</span></td>
+            <td style="padding:8px 6px;text-align:center;font-weight:800;color:#34D399">${u.total_sets}</td>
+            <td style="padding:8px 6px;text-align:center;color:#CBD5E1">${u.workout_days}</td>
+            <td style="padding:8px 6px;text-align:center;font-size:10.5px;color:#94A3B8">${u.last_active_date || 'None'}</td>
+          </tr>
+        `).join("");
+      }
+    }
+  } catch (e) {
+    alert("Could not load admin stats: " + e.message);
+  }
+}
+
+function closeAdminPortal() {
+  const modal = document.getElementById("admin-dashboard-modal");
+  if (modal) {
+    modal.style.display = "none";
+    modal.classList.remove("show");
+  }
+}
+
+// Global Exports
+window.currentUser = currentUser;
+window.initAuth = initAuth;
+window.handleRegister = handleRegister;
+window.handleLogin = handleLogin;
+window.logoutUser = logoutUser;
+window.openAdminPortal = openAdminPortal;
+window.closeAdminPortal = closeAdminPortal;
+window.syncToSQLite = syncToSQLite;
+window.syncFromSQLite = syncFromSQLite;
