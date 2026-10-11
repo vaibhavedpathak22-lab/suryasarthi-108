@@ -4493,6 +4493,9 @@ let currentUser = null;
 let authToken = localStorage.getItem("surya_auth_token") || "";
 
 function getApiBase() {
+  if (window.location.hostname && window.location.hostname.includes("github.io")) {
+    return window.SURYA_API_BASE || "https://suryasarthi-108.onrender.com";
+  }
   if (window.location.origin && window.location.origin.startsWith("http")) {
     return window.location.origin;
   }
